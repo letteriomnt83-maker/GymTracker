@@ -1,0 +1,616 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>GymTracker Pro</title>
+  
+  <!-- iOS PWA Meta Tags -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="GymTracker">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#0d1117">
+  
+  <link rel="stylesheet" href="style.css?v=10">
+</head>
+<body>
+
+  <!-- App Header -->
+  <header class="app-header">
+    <div class="brand">
+      <span style="font-size: 1.3rem;">🏋️</span>
+      <h1>GymTracker</h1>
+    </div>
+    <div class="header-actions">
+      <button class="action-btn btn-secondary" style="padding: 5px 10px; font-size: 0.75rem;" onclick="switchMainTab('home')">🏠 Home</button>
+      <button class="action-btn btn-secondary" style="padding: 5px 10px; font-size: 0.75rem;" onclick="openImportModal()">📁 Importa</button>
+      <div id="connectionStatus" class="status-badge">🟢 Offline Ready</div>
+    </div>
+  </header>
+
+  <!-- ==================== 1. VISTA ALLENAMENTO ==================== -->
+  <main id="viewHome" class="app-view active">
+    <div class="home-hero">
+      <div style="font-size: 2.6rem;">🏋️</div>
+      <h2>Cosa facciamo oggi?</h2>
+      <p id="homeSummary"></p>
+    </div>
+    <div class="home-grid">
+      <button class="home-tile" onclick="switchMainTab('workouts')"><span>🏋️</span><strong>Allenamento</strong><small>Schede e carichi</small></button>
+      <button class="home-tile" onclick="switchMainTab('calendar')"><span>📅</span><strong>Calendario</strong><small>Diario sedute</small></button>
+      <button class="home-tile" onclick="switchMainTab('analytics')"><span>📊</span><strong>Progressi</strong><small>Carichi e sforzo</small></button>
+      <button class="home-tile" onclick="switchMainTab('body')"><span>⚖️</span><strong>Misure</strong><small>Peso, BMI, pliche</small></button>
+    </div>
+    <button class="action-btn btn-primary" style="width: 100%; margin-top: 14px;" onclick="openImportModal()">📁 Carica scheda da Excel / CSV</button>
+    <button class="action-btn btn-secondary" style="width: 100%; margin-top: 8px;" onclick="openCreateWorkoutModal()">✏️ Crea scheda manualmente</button>
+    <button class="action-btn btn-secondary" style="width: 100%; margin-top: 8px;" onclick="startWithFreePesi()">⚡ Allenamento libero (senza scheda)</button>
+  </main>
+
+  <main id="viewWorkouts" class="app-view">
+    <!-- WELCOME ONBOARDING SCREEN (Mostrata quando non ci sono schede o alla prima apertura) -->
+    <section id="welcomeScreenSection" class="welcome-screen" style="display: none;">
+      <div class="welcome-card">
+        <div class="welcome-badge">OFFLINE • NESSUNA REGISTRAZIONE</div>
+        <div style="font-size: 2.5rem; margin-bottom: 6px;">🏋️‍♂️</div>
+        <h1 class="welcome-title">Benvenuto su<br><span style="color: var(--accent);">GymTracker</span></h1>
+        <p class="welcome-desc">
+          Il tuo tracker di allenamento tascabile. Inizia caricando la tua scheda da un file Excel o creandone una da zero.
+        </p>
+
+        <div class="welcome-actions">
+          <button class="action-btn btn-primary welcome-btn" onclick="openImportModal()">
+            <span style="font-size: 1.3rem;">📁</span>
+            <span>Carica Scheda da Excel / CSV</span>
+          </button>
+
+          <button class="action-btn btn-secondary welcome-btn" onclick="openCreateWorkoutModal()">
+            <span style="font-size: 1.2rem;">✏️</span>
+            <span>Crea Scheda Manuale</span>
+          </button>
+
+          <button class="action-btn btn-secondary welcome-btn" onclick="startWithFreePesi()">
+            <span style="font-size: 1.2rem;">🆓</span>
+            <span>Sala Pesi Libera (senza scheda)</span>
+          </button>
+
+          <button class="action-btn btn-secondary welcome-btn" style="border-color: rgba(255, 255, 255, 0.1);" onclick="startWithCalisthenics()">
+            <span style="font-size: 1.2rem;">🤸</span>
+            <span>Inizia con Calisthenics</span>
+          </button>
+
+          <button class="action-btn btn-secondary welcome-btn" style="border-color: rgba(88, 166, 255, 0.2); color: var(--text-muted); font-size: 0.8rem; margin-top: 6px;" onclick="loadDemoWorkouts()">
+            <span>📋 Carica Schede Demo (A & B)</span>
+          </button>
+        </div>
+
+        <div style="margin-top: 18px; font-size: 0.72rem; color: var(--text-muted);">
+          Supporta file .xlsx, .xls o .csv esportati da Excel o Google Fogli.
+        </div>
+      </div>
+    </section>
+
+    <!-- STANDARD WORKOUT INTERFACE (Mostrata quando ci sono schede caricate) -->
+    <div id="standardWorkoutInterface">
+      <div id="sessionDateBanner" class="session-banner" style="display: none;"><span></span><button class="action-btn btn-secondary" style="padding: 3px 8px; font-size: 0.7rem;" onclick="cancelSessionDate()">Annulla</button></div>
+      <!-- Dynamic Scrollable Subtabs -->
+      <div class="subtabs-wrapper">
+        <nav id="workoutSubtabs" class="subtabs"></nav>
+      </div>
+
+    <!-- Active Routine Container -->
+    <section id="activeWorkoutSection">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+        <h2 id="activeWorkoutTitle" style="font-size: 1.05rem; font-weight: 700;">Scheda Attiva</h2>
+        <div style="display: flex; gap: 6px;">
+          <button class="action-btn btn-secondary btn-print-hide" style="padding: 4px 8px; font-size: 0.72rem;" onclick="printActiveWorkout()">🖨️ Stampa</button>
+          <button class="action-btn btn-secondary btn-print-hide" style="padding: 4px 8px; font-size: 0.72rem;" onclick="openEditWorkoutModal()">✏️ Modifica</button>
+          <button id="deleteWorkoutBtn" class="action-btn btn-secondary btn-print-hide" style="padding: 4px 8px; font-size: 0.72rem; color: var(--hard-border);" onclick="deleteCurrentWorkout()">🗑️</button>
+        </div>
+      </div>
+
+      <!-- Warmup Card -->
+      <div class="warmup-card" onclick="toggleWarmup()">
+        <div class="warmup-label">
+          <span>🧘 Mobilità + Riscaldamento</span>
+        </div>
+        <input type="checkbox" id="warmupCheck" class="warmup-check" onclick="event.stopPropagation(); activeWarmupState[activeWorkoutId] = this.checked; saveActiveSession();">
+      </div>
+
+      <!-- Exercises List Container -->
+      <div id="exercisesContainer"></div>
+
+      <!-- Action Buttons -->
+      <div class="actions-bar">
+        <button class="action-btn btn-primary" onclick="completeActiveWorkout()">🏁 Salva Seduta</button>
+        <button class="action-btn btn-secondary" onclick="copyActiveWorkoutToClipboard()">📋 Copia per Sheets</button>
+        <button class="action-btn btn-danger" onclick="resetActiveWorkoutSession()">🗑️ Reset Dati Seduta</button>
+      </div>
+    </section>
+
+    <!-- CALISTHENICS SECTION (Canvas Libero) -->
+    <section id="sectionCalisthenics" style="display: none;">
+      <!-- Timer Calisthenics Versatile (Conto alla rovescia, Cronometro, Intervalli) -->
+      <div class="card" style="background: linear-gradient(135deg, #1c2128 0%, #161b22 100%); border: 1px solid rgba(88, 166, 255, 0.3); padding: 14px; margin-bottom: 14px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+          <strong style="color: var(--accent); font-size: 0.95rem;">⏱️ Timer Allenamento</strong>
+          <select id="caliTimerModeSelect" class="app-input" style="width: auto; padding: 4px 8px; height: 32px; font-size: 0.8rem;" onchange="changeCaliTimerMode()">
+            <option value="countdown" selected>Conto alla Rovescia</option>
+            <option value="stopwatch">Cronometro Libero</option>
+            <option value="intervals">Intervalli / Round</option>
+          </select>
+        </div>
+
+        <!-- Selettore Tempo Personalizzato (Qualsiasi minuto: 5, 6, 7, 8, 12...) -->
+        <div id="caliTimerDurationRow" style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;">
+          <span style="font-size: 0.75rem; color: var(--text-muted);">Durata (minuti):</span>
+          <div style="display: flex; align-items: center; gap: 6px;">
+            <div class="stepper-box" style="height: 32px; width: 115px;">
+              <button type="button" class="stepper-btn" onclick="stepCaliTimerMinutes(-1)">-</button>
+              <input type="number" id="caliTimerCustomMinutes" class="stepper-input" style="font-size: 0.9rem;" value="5" min="1" oninput="handleCaliCustomMinutesInput(this.value)">
+              <button type="button" class="stepper-btn" onclick="stepCaliTimerMinutes(1)">+</button>
+            </div>
+            <span style="font-size: 0.75rem; color: var(--text-muted);">min</span>
+          </div>
+        </div>
+
+        <!-- Display Tempo -->
+        <div style="display: flex; align-items: baseline; justify-content: center; gap: 8px; margin: 6px 0 10px;">
+          <span id="caliTimerDisplay" style="font-size: 2.5rem; font-weight: 800; font-variant-numeric: tabular-nums; color: var(--accent);">05:00</span>
+          <span id="caliTimerRoundBadge" style="font-size: 0.9rem; font-weight: 700; color: var(--text-muted); display: none;">Round 1</span>
+        </div>
+
+        <!-- Pulsanti Controllo Timer -->
+        <div style="display: flex; gap: 8px; justify-content: center;">
+          <button id="caliTimerStartBtn" class="action-btn btn-primary" style="padding: 8px 18px; font-size: 0.85rem;" onclick="toggleCaliTimer()">▶️ Avvia</button>
+          <button class="action-btn btn-secondary" style="padding: 8px 14px; font-size: 0.85rem;" onclick="resetCaliTimer()">🔄 Reset</button>
+        </div>
+      </div>
+
+      <!-- Add Custom Exercise to Calisthenics Canvas -->
+      <div class="card" style="margin-bottom: 12px; padding: 10px 12px;">
+        <div style="display: flex; gap: 8px;">
+          <input type="text" id="newCaliExerciseInput" class="app-input" list="exerciseSuggestions" autocomplete="off" onkeydown="if(event.key==='Enter')addCalisthenicsExercise()" placeholder="Es. Trazioni zavorrate, Dip, L-Sit, Muscle-Up...">
+          <button class="action-btn btn-secondary" style="white-space: nowrap; padding: 0 14px;" onclick="addCalisthenicsExercise()">+ Aggiungi</button>
+        </div>
+      </div>
+
+      <!-- Exercises List Calisthenics -->
+      <div id="exercisesContainerCali"></div>
+
+      <div class="actions-bar">
+        <button class="action-btn btn-primary" onclick="completeCalisthenicsWorkout()">🏁 Salva Seduta Calisthenics</button>
+        <button class="action-btn btn-secondary" onclick="copyCalisthenicsToClipboard()">📋 Copia per Sheets</button>
+        <button class="action-btn btn-secondary" onclick="saveFreeAsRoutine()">📌 Salva come scheda</button>
+        <button class="action-btn btn-danger" onclick="resetCalisthenicsSession()">🗑️ Reset Seduta</button>
+      </div>
+    </section>
+    </div> <!-- /standardWorkoutInterface -->
+  </main>
+
+  <!-- ==================== 2. VISTA CALENDARIO ==================== -->
+  <main id="viewCalendar" class="app-view">
+    <div class="card">
+      <div class="calendar-header">
+        <button class="cal-nav-btn" onclick="navigateMonth(-1)">◀</button>
+        <h3 id="calendarMonthTitle">Mese Anno</h3>
+        <button class="cal-nav-btn" onclick="navigateMonth(1)">▶</button>
+      </div>
+
+      <!-- Day labels -->
+      <div class="calendar-grid" style="margin-bottom: 6px;">
+        <div class="cal-day-label">L</div>
+        <div class="cal-day-label">M</div>
+        <div class="cal-day-label">M</div>
+        <div class="cal-day-label">G</div>
+        <div class="cal-day-label">V</div>
+        <div class="cal-day-label">S</div>
+        <div class="cal-day-label">D</div>
+      </div>
+
+      <!-- Days Grid -->
+      <div id="calendarDaysGrid" class="calendar-grid"></div>
+
+      <!-- Legend -->
+      <div style="display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; margin-top: 14px; font-size: 0.72rem; color: var(--text-muted);">
+        <span style="display: flex; align-items: center; gap: 4px;"><span class="dot dot-a"></span> Sala Pesi</span>
+        <span style="display: flex; align-items: center; gap: 4px;"><span class="dot dot-c"></span> Calisthenics</span>
+        <span style="display: flex; align-items: center; gap: 4px;"><span class="dot dot-other"></span> Altro</span>
+      </div>
+    </div>
+
+    <!-- Details & Add Workout Button for Selected Day -->
+    <div id="calendarDayDetails" class="day-details-box">
+      <div style="text-align: center; color: var(--text-muted); font-size: 0.85rem;">
+        Seleziona un giorno sul calendario per visualizzare lo storico o registrare una seduta.
+      </div>
+    </div>
+  </main>
+
+  <!-- ==================== 3. VISTA ANALISI & DIARIO PROGRESSI ==================== -->
+  <main id="viewAnalytics" class="app-view">
+    <!-- Weekly Stats -->
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px;">
+      <div class="card" style="margin-bottom: 0; text-align: center; padding: 12px;">
+        <div style="font-size: 0.72rem; color: var(--text-muted); text-transform: uppercase; font-weight: 600;">Questa Settimana</div>
+        <div id="statWeeklyCount" style="font-size: 1.5rem; font-weight: 800; color: var(--accent); margin-top: 4px;">0</div>
+      </div>
+      <div class="card" style="margin-bottom: 0; text-align: center; padding: 12px;">
+        <div style="font-size: 0.72rem; color: var(--text-muted); text-transform: uppercase; font-weight: 600;">Totale Sedute</div>
+        <div id="statTotalCount" style="font-size: 1.5rem; font-weight: 800; color: var(--easy-border); margin-top: 4px;">0</div>
+      </div>
+    </div>
+
+    <!-- Effort Distribution -->
+    <div class="card">
+      <div class="card-title">
+        <span>Bilancio Sforzo & Fatica</span>
+      </div>
+      <div style="display: flex; height: 12px; border-radius: 6px; overflow: hidden; margin: 10px 0; background: var(--bg-input);">
+        <div id="barEasy" style="background: var(--easy-color); width: 33%;"></div>
+        <div id="barMed" style="background: var(--med-color); width: 33%;"></div>
+        <div id="barHard" style="background: var(--hard-color); width: 34%;"></div>
+      </div>
+      <div style="display: flex; justify-content: space-between; font-size: 0.75rem; color: var(--text-muted);">
+        <span id="labelEasy">🟢 Facile: 0%</span>
+        <span id="labelMed">🟡 Medio: 0%</span>
+        <span id="labelHard">🔴 Difficile: 0%</span>
+      </div>
+    </div>
+
+    <!-- Smart Progression Diary -->
+    <div class="card">
+      <div class="card-title">
+        <span>Diario Progressi Intelligente</span>
+      </div>
+      <p style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 8px;">
+        Analisi incrociata tra carico (kg) e colore di sforzo per capire miglioramenti reali, adattamento o stallo.
+      </p>
+      <select id="progressionExerciseSelect" class="app-input" onchange="renderExerciseProgression(this.value)">
+        <option value="">Seleziona un esercizio da analizzare...</option>
+      </select>
+      <div id="exerciseProgressionList" style="margin-top: 12px;"></div>
+
+      <!-- Trend Chart Box -->
+      <div id="trendChartBox" class="chart-box" style="display: none;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+          <strong id="trendChartTitle" style="font-size: 0.85rem; color: #fff;">📈 Andamento Carico nel Tempo</strong>
+          <button class="action-btn btn-secondary btn-print-hide" style="padding: 3px 8px; font-size: 0.7rem;" onclick="printAnalyticsChart()">🖨️ Stampa Grafico</button>
+        </div>
+        <div id="trendChartSvgContainer"></div>
+      </div>
+    </div>
+
+    <!-- Export & Backup -->
+    <div class="card">
+      <div class="card-title">
+        <span>Backup & Sincronizzazione</span>
+      </div>
+      <div class="actions-bar" style="margin-top: 8px; margin-bottom: 0;">
+        <button class="action-btn btn-secondary" onclick="copyAllHistory()">📋 Copia Tutto per Sheets</button>
+        <button class="action-btn btn-secondary" onclick="exportCSV()">💾 Scarica File CSV</button>
+        <button class="action-btn btn-primary" onclick="exportBackup()">🛡️ Backup completo (JSON)</button>
+        <button class="action-btn btn-secondary" onclick="document.getElementById('backupFileInput').click()">♻️ Ripristina backup</button>
+        <input type="file" id="backupFileInput" accept=".json,application/json" style="display:none" onchange="importBackup(event)">
+        <button class="action-btn btn-danger" onclick="clearAllHistory()">⚠️ Cancella Tutto</button>
+      </div>
+    </div>
+  </main>
+
+  <!-- ==================== 4. VISTA CORPO & MISURE (COMPOSIZIONE CORPOREA) ==================== -->
+  <main id="viewBody" class="app-view">
+    <!-- Profilo Fisico Anagrafica -->
+    <div class="card">
+      <div class="card-title">
+        <span>Profilo Fisico</span>
+      </div>
+      <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 10px;">
+        <div>
+          <label style="font-size: 0.72rem; color: var(--text-muted);">Sesso:</label>
+          <select id="userGenderInput" class="app-input" style="padding: 6px 8px; font-size: 0.85rem;" onchange="saveBodyProfile()">
+            <option value="male">Uomo</option>
+            <option value="female">Donna</option>
+          </select>
+        </div>
+        <div>
+          <label style="font-size: 0.72rem; color: var(--text-muted);">Età:</label>
+          <input type="number" id="userAgeInput" class="app-input" style="padding: 6px 8px; font-size: 0.85rem; text-align: center;" placeholder="anni" onchange="saveBodyProfile()">
+        </div>
+        <div>
+          <label style="font-size: 0.72rem; color: var(--text-muted);">Altezza (cm):</label>
+          <input type="number" id="userHeightInput" class="app-input" style="padding: 6px 8px; font-size: 0.85rem; text-align: center;" placeholder="cm" onchange="saveBodyProfile()">
+        </div>
+      </div>
+      
+      <!-- Current Snapshot -->
+      <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; background: var(--bg-input); border-radius: 8px; padding: 10px; text-align: center;">
+        <div>
+          <div style="font-size: 0.68rem; color: var(--text-muted);">Ultimo Peso</div>
+          <strong id="lastWeightDisplay" style="color: var(--accent); font-size: 1rem;">-- kg</strong>
+        </div>
+        <div>
+          <div style="font-size: 0.68rem; color: var(--text-muted);">% Massa Grassa</div>
+          <strong id="lastFatDisplay" style="color: var(--orange); font-size: 1rem;">-- %</strong>
+        </div>
+        <div>
+          <div style="font-size: 0.68rem; color: var(--text-muted);">BMI Calcolato</div>
+          <strong id="userBmiDisplay" style="color: #fff; font-size: 1rem;">--</strong>
+        </div>
+      </div>
+    </div>
+
+    <!-- Registra Nuova Rilevazione -->
+    <div class="card">
+      <div class="card-title">
+        <span>Registra Nuova Rilevazione</span>
+      </div>
+
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px;">
+        <div>
+          <label style="font-size: 0.72rem; color: var(--text-muted);">Data:</label>
+          <input type="date" id="newWeightDate" class="app-input">
+        </div>
+        <div>
+          <label style="font-size: 0.72rem; color: var(--text-muted);">Peso (kg) *:</label>
+          <input type="number" step="0.1" id="newWeightInput" class="app-input" placeholder="Es. 74.5" oninput="handleWeightOrFatInput()">
+        </div>
+      </div>
+
+      <!-- Opzionali Massa Grassa / Magra -->
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px;">
+        <div>
+          <label style="font-size: 0.72rem; color: var(--text-muted);">% Massa Grassa (opzionale):</label>
+          <input type="number" step="0.1" id="newFatPctInput" class="app-input" placeholder="Es. 15.2%" oninput="handleWeightOrFatInput()">
+        </div>
+        <div>
+          <label style="font-size: 0.72rem; color: var(--text-muted);">% Massa Magra (auto):</label>
+          <input type="number" step="0.1" id="newLeanPctInput" class="app-input" placeholder="Es. 84.8%" readonly style="background: rgba(255,255,255,0.03); color: var(--easy-border);">
+        </div>
+      </div>
+
+      <!-- Pulsante Calcolatore Pliche -->
+      <button type="button" class="action-btn btn-secondary" style="margin-top: 10px; width: 100%; border-color: rgba(88, 166, 255, 0.4); color: var(--accent);" onclick="openPlicoModal()">
+        📐 Calcola % Grasso con Plicometria (Pliche)
+      </button>
+
+      <input type="text" id="newWeightNote" class="app-input" style="margin-top: 10px;" placeholder="Note (es. a digiuno, deficit calorico, inizio ricarica...)">
+      
+      <button class="action-btn btn-primary" style="margin-top: 12px; width: 100%;" onclick="logNewWeight()">+ Salva Rilevazione</button>
+    </div>
+
+    <!-- Storico Rilevazioni -->
+    <div class="card">
+      <div class="card-title">
+        <span>Diario Composizione Corporea</span>
+      </div>
+      <div id="weightHistoryList"></div>
+    </div>
+  </main>
+
+  <!-- ==================== MODALI (POPUPS) ==================== -->
+
+  <!-- Modal 1: Import Excel / CSV -->
+  <div id="importModal" class="modal-overlay">
+    <div class="modal-box">
+      <div class="modal-header">
+        <h3>📁 Importa Scheda da Excel / CSV</h3>
+        <button class="modal-close-btn" onclick="closeImportModal()">✕</button>
+      </div>
+      
+      <!-- Tabs Import: File o Incolla Testo -->
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 12px;">
+        <button id="importTabFileBtn" class="action-btn btn-secondary active" style="padding: 6px; font-size: 0.8rem;" onclick="switchImportTab('file')">📁 Carica File</button>
+        <button id="importTabTextBtn" class="action-btn btn-secondary" style="padding: 6px; font-size: 0.8rem;" onclick="switchImportTab('text')">📋 Incolla Testo</button>
+      </div>
+
+      <!-- Sezione File -->
+      <div id="importFileSection">
+        <div class="drop-zone" onclick="document.getElementById('excelFileInput').click()" ondragover="event.preventDefault(); this.classList.add('dragover')" ondragleave="this.classList.remove('dragover')" ondrop="handleFileDrop(event)">
+          <div style="font-size: 2rem; margin-bottom: 8px;">📊</div>
+          <strong style="color: #fff; font-size: 0.95rem;">Tocca per selezionare o trascina il file</strong>
+          <p style="font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;">Supporta file .xlsx, .xls o .csv</p>
+        </div>
+        <input type="file" id="excelFileInput" accept=".xlsx, .xls, .csv" style="display: none;" onchange="handleExcelFileUpload(event)">
+      </div>
+
+      <!-- Sezione Incolla Testo -->
+      <div id="importTextSection" style="display: none; margin-bottom: 12px;">
+        <label style="font-size: 0.75rem; color: var(--text-muted); display: block; margin-bottom: 4px;">Incolla qui il testo della tabella (supporta anche Scheda A e B insieme):</label>
+        <textarea id="importPastedText" class="app-input" style="height: 120px; font-size: 0.75rem; font-family: monospace;" placeholder="Incolla qui le righe del foglio..."></textarea>
+        <button class="action-btn btn-primary" style="margin-top: 8px; width: 100%; font-size: 0.82rem;" onclick="parsePastedWorkoutText()">⚡ Riconosci Schede Automaticamente</button>
+      </div>
+
+      <div id="importPreviewBox" style="display: none;">
+        <div style="margin-bottom: 10px;">
+          <label style="font-size: 0.8rem; color: var(--text-muted);">Nome per questa Scheda:</label>
+          <input type="text" id="importRoutineName" class="app-input" placeholder="Es. Scheda C, Full Body, Gambe...">
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px; font-size: 0.8rem;">
+          <div>
+            <label style="color: var(--text-muted);">Colonna Esercizio:</label>
+            <select id="mapColExercise" class="app-input" style="padding: 4px 6px; font-size: 0.8rem;"></select>
+          </div>
+          <div>
+            <label style="color: var(--text-muted);">Colonna Serie:</label>
+            <select id="mapColSets" class="app-input" style="padding: 4px 6px; font-size: 0.8rem;"></select>
+          </div>
+          <div>
+            <label style="color: var(--text-muted);">Colonna Ripetizioni:</label>
+            <select id="mapColReps" class="app-input" style="padding: 4px 6px; font-size: 0.8rem;"></select>
+          </div>
+          <div>
+            <label style="color: var(--text-muted);">Colonna Recupero (s):</label>
+            <select id="mapColRest" class="app-input" style="padding: 4px 6px; font-size: 0.8rem;"></select>
+          </div>
+        </div>
+
+        <div style="max-height: 180px; overflow-y: auto; background: var(--bg-input); border-radius: 8px; padding: 8px; margin-bottom: 14px; font-size: 0.78rem;">
+          <table id="importPreviewTable" style="width: 100%; border-collapse: collapse;"></table>
+        </div>
+
+        <div style="display: flex; gap: 8px;">
+          <button class="action-btn btn-primary" onclick="confirmImportedWorkout()">✅ Salva Scheda</button>
+          <button class="action-btn btn-secondary" onclick="closeImportModal()">Annulla</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal 2: Crea / Modifica Scheda Manuale -->
+  <div id="workoutEditorModal" class="modal-overlay">
+    <div class="modal-box">
+      <div class="modal-header">
+        <h3 id="workoutEditorTitle">Crea / Modifica Scheda</h3>
+        <button class="modal-close-btn" onclick="closeWorkoutEditorModal()">✕</button>
+      </div>
+
+      <div style="margin-bottom: 12px;">
+        <label style="font-size: 0.8rem; color: var(--text-muted);">Nome Scheda:</label>
+        <input type="text" id="editorWorkoutName" class="app-input" placeholder="Es. Scheda C, Gambe, Spalle...">
+      </div>
+
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+        <strong style="font-size: 0.9rem;">Esercizi</strong>
+        <button class="action-btn btn-secondary" style="padding: 4px 10px; font-size: 0.75rem;" onclick="addExerciseToEditor()">+ Aggiungi Esercizio</button>
+      </div>
+
+      <div style="margin-bottom: 8px;">
+        <label style="font-size: 0.72rem; color: var(--text-muted); display: block; margin-bottom: 4px;">Tocca per aggiungere un esercizio comune:</label>
+        <div id="quickExerciseChips" class="chips-scroll-box"></div>
+      </div>
+
+      <div id="editorExercisesList" style="max-height: 280px; overflow-y: auto; margin-bottom: 14px;"></div>
+
+      <div style="display: flex; gap: 8px;">
+        <button class="action-btn btn-primary" onclick="saveWorkoutFromEditor()">💾 Salva Scheda</button>
+        <button class="action-btn btn-secondary" onclick="closeWorkoutEditorModal()">Annulla</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal 3: Registra Allenamento su Data Calendario -->
+  <div id="calendarLogModal" class="modal-overlay">
+    <div class="modal-box">
+      <div class="modal-header">
+        <h3 id="calLogModalTitle">Registra Allenamento</h3>
+        <button class="modal-close-btn" onclick="closeCalendarLogModal()">✕</button>
+      </div>
+
+      <div style="margin-bottom: 12px;">
+        <label style="font-size: 0.8rem; color: var(--text-muted);">Tipologia di Allenamento:</label>
+        <select id="calLogTypeSelect" class="app-input" onchange="handleCalLogTypeChange()">
+          <option value="pesi">🏋️ Sala Pesi (Scegli Scheda)</option>
+          <option value="calisthenics">🤸 Calisthenics</option>
+          <option value="altro">🏃 Altro (Cardio, Corsa, Mobilità...)</option>
+        </select>
+      </div>
+
+      <div id="calLogRoutineSelectBox" style="margin-bottom: 12px;">
+        <label style="font-size: 0.8rem; color: var(--text-muted);">Quale Scheda hai eseguito?</label>
+        <select id="calLogRoutineSelect" class="app-input"></select>
+      </div>
+
+      <div id="calLogCustomBox" style="display: none; margin-bottom: 12px;">
+        <label style="font-size: 0.8rem; color: var(--text-muted);">Descrizione / Attività:</label>
+        <input type="text" id="calLogCustomDesc" class="app-input" placeholder="Es. Corsa 5km, Partita a calcetto, Mobilità...">
+      </div>
+
+      <div style="margin-bottom: 14px;">
+        <label style="font-size: 0.8rem; color: var(--text-muted);">Sensazione generale / Sforzo:</label>
+        <div class="diff-buttons" style="margin-top: 4px;">
+          <button type="button" class="diff-btn btn-easy active" id="calLogDiffEasy" onclick="selectCalLogDiff('easy')">🟢 Facile</button>
+          <button type="button" class="diff-btn btn-med" id="calLogDiffMed" onclick="selectCalLogDiff('med')">🟡 Medio</button>
+          <button type="button" class="diff-btn btn-hard" id="calLogDiffHard" onclick="selectCalLogDiff('hard')">🔴 Duro</button>
+        </div>
+      </div>
+
+      <div style="display: flex; gap: 8px;">
+        <button class="action-btn btn-secondary" onclick="fillLoadsForDate()">✍️ Compila carichi</button>
+        <button class="action-btn btn-primary" onclick="confirmCalendarWorkoutLog()">Solo segna</button>
+        <button class="action-btn btn-secondary" onclick="closeCalendarLogModal()">Annulla</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal 4: Calcolatore Plicometria (Jackson-Pollock 3 Pliche) -->
+  <div id="plicoModal" class="modal-overlay">
+    <div class="modal-box">
+      <div class="modal-header">
+        <h3>📐 Calcolo % Grasso da Pliche</h3>
+        <button class="modal-close-btn" onclick="closePlicoModal()">✕</button>
+      </div>
+
+      <p style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 12px;">
+        Formula scientifica standard <strong>Jackson-Pollock 3 Pliche</strong>. Inserisci le misurazioni in millimetri (mm) prese con il plicometro.
+      </p>
+
+      <div id="plicoFormGenderHint" style="font-size: 0.8rem; color: var(--accent); margin-bottom: 10px; font-weight: 600;">
+        Pliche per Uomo: Pettorale, Addome, Coscia
+      </div>
+
+      <div style="display: grid; grid-template-columns: 1fr; gap: 8px; margin-bottom: 14px;">
+        <div>
+          <label id="plicoLabel1" style="font-size: 0.75rem; color: var(--text-muted);">Plica 1 - Pettorale (mm):</label>
+          <input type="number" step="0.5" id="plicoVal1" class="app-input" placeholder="mm" oninput="runPlicometryCalculation()">
+        </div>
+        <div>
+          <label id="plicoLabel2" style="font-size: 0.75rem; color: var(--text-muted);">Plica 2 - Addome (mm):</label>
+          <input type="number" step="0.5" id="plicoVal2" class="app-input" placeholder="mm" oninput="runPlicometryCalculation()">
+        </div>
+        <div>
+          <label id="plicoLabel3" style="font-size: 0.75rem; color: var(--text-muted);">Plica 3 - Coscia (mm):</label>
+          <input type="number" step="0.5" id="plicoVal3" class="app-input" placeholder="mm" oninput="runPlicometryCalculation()">
+        </div>
+      </div>
+
+      <!-- Risultati Calcolo Pliche -->
+      <div style="background: var(--bg-input); border-radius: 8px; padding: 12px; margin-bottom: 14px; text-align: center;">
+        <div style="font-size: 0.75rem; color: var(--text-muted);">% Massa Grassa Stimata</div>
+        <div id="plicoResultBf" style="font-size: 1.8rem; font-weight: 800; color: var(--accent); margin: 4px 0;">-- %</div>
+        <div id="plicoResultDetails" style="font-size: 0.75rem; color: var(--text-muted);">Inserisci le 3 pliche per calcolare</div>
+      </div>
+
+      <div style="display: flex; gap: 8px;">
+        <button class="action-btn btn-primary" onclick="applyPlicometryResult()">✅ Applica alla Rilevazione</button>
+        <button class="action-btn btn-secondary" onclick="closePlicoModal()">Chiudi</button>
+      </div>
+    </div>
+  </div>
+
+  <datalist id="exerciseSuggestions"></datalist>
+
+  <!-- Floating Rest Timer -->
+  <div id="restTimerBar" class="rest-timer-bar">
+    <div class="timer-left">
+      <div id="timerDisplay" class="timer-display">01:30</div>
+      <div>
+        <div style="font-size: 0.85rem; font-weight: 700;">Recupero</div>
+        <div id="timerExerciseName" class="timer-label">Prossima serie</div>
+      </div>
+    </div>
+    <div class="timer-actions">
+      <button class="timer-btn" onclick="adjustTimer(30)">+30s</button>
+      <button class="timer-btn" onclick="adjustTimer(-15)">-15s</button>
+      <button class="timer-btn skip-btn" onclick="stopTimer()">Salta</button>
+    </div>
+  </div>
+
+  <!-- Bottom Navigation Bar -->
+  <nav class="bottom-nav">
+    <button class="nav-item" data-tab="home" onclick="switchMainTab('home')"><span class="icon">🏠</span><span>Home</span></button>
+    <button class="nav-item" data-tab="workouts" onclick="switchMainTab('workouts')"><span class="icon">🏋️</span><span>Allenam.</span></button>
+    <button class="nav-item" data-tab="calendar" onclick="switchMainTab('calendar')"><span class="icon">📅</span><span>Calendario</span></button>
+    <button class="nav-item" data-tab="analytics" onclick="switchMainTab('analytics')"><span class="icon">📊</span><span>Progressi</span></button>
+    <button class="nav-item" data-tab="body" onclick="switchMainTab('body')"><span class="icon">⚖️</span><span>Misure</span></button>
+  </nav>
+
+  <!-- Toast -->
+  <div id="toast" class="toast">Dati salvati!</div>
+
+  <!-- SheetJS for 100% offline Excel file parsing -->
+  <script src="xlsx.mini.min.js"></script>
+  <script src="app.js?v=10"></script>
+</body>
+</html>
