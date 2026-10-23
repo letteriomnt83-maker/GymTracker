@@ -3,7 +3,138 @@ const enc = s => encodeURIComponent(s).replace(/'/g, '%27');
 function localDateStr(d = new Date()) {
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
 }
-function safeSet(k, v) { try { localStorage.setItem(k, v); } catch (e) { alert('⚠️ Salvataggio non riuscito (spazio pieno?). Fai un backup.'); } }
+function localDateFromString(dateStr) {
+  const [year, month, day] = dateStr.split('-').map(Number);
+  return new Date(year, month - 1, day);
+}
+function getMaxRecordedLoad(sets) {
+  const loads = sets.map(set => Number(set.kg)).filter(kg => Number.isFinite(kg) && kg > 0);
+  return loads.length ? Math.max(...loads) : null;
+}
+function formatRecordedSet(set) {
+  const kg = Number(set.kg);
+  const load = Number.isFinite(kg) && kg > 0 ? `${kg}kg × ` : '';
+  const reps = String(set.reps == null ? '' : set.reps).trim();
+  return load + (reps || (load ? '' : 'Sforzo registrato'));
+}
+function neutralizeSpreadsheetFormula(value) {
+  const text = String(value == null ? '' : value);
+  return /^[\u0000-\u0020]*[=+\-@]/.test(text) ? `'${text}` : text;
+}
+function tsvField(value) {
+  return neutralizeSpreadsheetFormula(value).replace(/[\t\r\n]/g, ' ');
+}
+function safeSet(k, v) {
+  try {
+    localStorage.setItem(k, v);
+    return true;
+  } catch (e) {
+    console.error(`GymTracker: salvataggio non riuscito per ${k}.`, e);
+    alert('⚠️ Salvataggio non riuscito. Lo spazio potrebbe essere esaurito o il browser potrebbe bloccare i dati. Esporta un backup appena possibile.');
+    return false;
+  }
+}
+function safeSetBatch(entries) {
+  const previous = new Map();
+  try {
+    entries.forEach(([key]) => previous.set(key, localStorage.getItem(key)));
+    entries.forEach(([key, value]) => localStorage.setItem(key, value));
+    return true;
+  } catch (error) {
+    try {
+      previous.forEach((value, key) => {
+        if (value === null) localStorage.removeItem(key);
+        else localStorage.setItem(key, value);
+      });
+    } catch (restoreError) {
+      console.error('GymTracker: impossibile ripristinare i dati precedenti al salvataggio.', restoreError);
+      alert('Salvataggio non riuscito e ripristino automatico incompleto. Non chiudere la pagina; esporta subito i dati ancora disponibili.');
+      return false;
+    }
+    console.error('GymTracker: salvataggio non riuscito.', error);
+    alert('Salvataggio non riuscito. Lo spazio potrebbe essere esaurito o il browser potrebbe bloccare i dati. Esporta un backup appena possibile.');
+    return false;
+  }
+}
+function isRecord(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+function isSafeIdentifier(value) {
+  return typeof value === 'string' && /^[A-Za-z0-9_-]+$/.test(value);
+}
+function isValidDateString(value) {
+  if (typeof value !== 'string') return false;
+  const parts = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!parts) return false;
+  const date = new Date(Date.UTC(Number(parts[1]), Number(parts[2]) - 1, Number(parts[3])));
+  return date.getUTCFullYear() === Number(parts[1])
+    && date.getUTCMonth() === Number(parts[2]) - 1
+    && date.getUTCDate() === Number(parts[3]);
+}
+function isValidExercise(exercise) {
+  const sets = exercise && (typeof exercise.sets === 'number'
+    || (typeof exercise.sets === 'string' && /^\d+$/.test(exercise.sets)))
+    ? Number(exercise.sets) : NaN;
+  return isRecord(exercise)
+    && isSafeIdentifier(exercise.id)
+    && typeof exercise.name === 'string'
+    && Number.isSafeInteger(sets)
+    && sets > 0
+    && (exercise.targetReps === undefined || typeof exercise.targetReps === 'string')
+    && (exercise.rest === undefined || (Number.isSafeInteger(exercise.rest) && exercise.rest >= 0));
+}
+function isValidHistoryEntry(entry) {
+  if (!isRecord(entry) || !Number.isSafeInteger(entry.id)
+    || !isValidDateString(entry.date) || typeof entry.workout !== 'string') return false;
+  return entry.exercises === undefined || (Array.isArray(entry.exercises) && entry.exercises.every(exercise =>
+    isRecord(exercise)
+    && typeof exercise.name === 'string'
+    && Array.isArray(exercise.sets)
+    && exercise.sets.every(set => isRecord(set))
+  ));
+}
+function isValidStoredValue(key, value) {
+  if (key === 'gym_active_workout_id') return typeof value === 'string';
+  if (key === 'gym_user_workouts') {
+    return isRecord(value) && Object.values(value).every(workout =>
+      isRecord(workout) && isSafeIdentifier(workout.id) && typeof workout.name === 'string'
+      && Array.isArray(workout.exercises) && workout.exercises.every(isValidExercise)
+    );
+  }
+  if (['gym_cali_exercises', 'gym_free_pesi', 'gym_free_altro'].includes(key)) {
+    return Array.isArray(value) && value.every(isValidExercise);
+  }
+  if (key === 'gym_workout_history') {
+    return Array.isArray(value) && value.every(isValidHistoryEntry);
+  }
+  if (key === 'gym_body_profile') {
+    return isRecord(value)
+      && (value.gender === undefined || ['male', 'female'].includes(value.gender))
+      && (value.age === undefined || value.age === null || (Number.isSafeInteger(value.age) && value.age >= 1 && value.age <= 120))
+      && (value.height === undefined || value.height === null || (Number.isFinite(value.height) && value.height >= 50 && value.height <= 260))
+      && (value.weights === undefined || (Array.isArray(value.weights) && value.weights.every(weight =>
+        isRecord(weight) && Number.isSafeInteger(weight.id) && isValidDateString(weight.date)
+        && typeof weight.weight === 'number' && Number.isFinite(weight.weight) && weight.weight > 0
+        && ['fatPct', 'leanPct', 'fatKg', 'leanKg'].every(field =>
+          weight[field] === undefined || weight[field] === null || (typeof weight[field] === 'number' && Number.isFinite(weight[field]))
+        )
+        && (weight.note === undefined || typeof weight.note === 'string')
+      )));
+  }
+  if (['gym_active_session_inputs', 'gym_active_warmup'].includes(key)) return isRecord(value);
+  return false;
+}
+function parseStoredJson(key, serialized, fallback) {
+  try {
+    const value = JSON.parse(serialized);
+    if (!isValidStoredValue(key, value)) throw new Error('La struttura dei dati non è valida.');
+    return value;
+  } catch (error) {
+    console.error(`GymTracker: dati salvati non validi per ${key}.`, error);
+    alert(`I dati salvati per ${key} non sono leggibili. Esporta subito un backup prima di modificarli.`);
+    return fallback;
+  }
+}
 function splitCSVLine(l, d) {
   const o = []; let c = '', q = false;
   for (let i = 0; i < l.length; i++) {
@@ -15,18 +146,24 @@ function splitCSVLine(l, d) {
   o.push(c.trim()); return o;
 }
 let sessionDateOverride = null;
-let freeCategory = 'calisthenics'; // lavagna libera: 'calisthenics' | 'pesi'
-function freeKey() { return freeCategory === 'pesi' ? 'free_pesi' : 'calisthenics'; }
-function freeLabel() { return freeCategory === 'pesi' ? 'Sala Pesi (Libero)' : 'Calisthenics'; }
-function freeStorageKey() { return freeCategory === 'pesi' ? 'gym_free_pesi' : 'gym_cali_exercises'; }
-function saveFreeBoard() { safeSet(freeStorageKey(), JSON.stringify(caliExercises)); }
+let sessionWorkoutTitleOverride = null;
+let sessionWorkoutCategoryOverride = null;
+let freeCategory = 'calisthenics'; // lavagna libera: 'calisthenics' | 'pesi' | 'altro'
+function freeKey() { return freeCategory === 'pesi' ? 'free_pesi' : freeCategory === 'altro' ? 'free_altro' : 'calisthenics'; }
+function freeLabel() { return freeCategory === 'pesi' ? 'Sala Pesi (Libero)' : freeCategory === 'altro' ? 'Altro (Libero)' : 'Calisthenics'; }
+function freeStorageKey() { return freeCategory === 'pesi' ? 'gym_free_pesi' : freeCategory === 'altro' ? 'gym_free_altro' : 'gym_cali_exercises'; }
+function saveFreeBoard(exercises = caliExercises) {
+  return safeSet(freeStorageKey(), JSON.stringify(exercises));
+}
 function setFreeCategory(cat) {
   freeCategory = cat;
-  try { caliExercises = JSON.parse(localStorage.getItem(freeStorageKey()) || '[]'); } catch (e) { caliExercises = []; }
+  const key = freeStorageKey();
+  const savedExercises = localStorage.getItem(key);
+  caliExercises = savedExercises ? parseStoredJson(key, savedExercises, []) : [];
   const inp = document.getElementById('newCaliExerciseInput');
-  if (inp) inp.placeholder = cat === 'pesi' ? 'Es. Panca piana, Squat, Lat machine...' : 'Es. Trazioni zavorrate, Dip, L-Sit, Muscle-Up...';
+  if (inp) inp.placeholder = cat === 'pesi' ? 'Es. Panca piana, Squat, Lat machine...' : cat === 'altro' ? 'Es. Corsa, cyclette, mobilità...' : 'Es. Trazioni zavorrate, Dip, L-Sit, Muscle-Up...';
   const b = document.querySelector('#sectionCalisthenics .actions-bar .btn-primary');
-  if (b) b.textContent = cat === 'pesi' ? '🏁 Salva Seduta Sala Pesi' : '🏁 Salva Seduta Calisthenics';
+  if (b) b.textContent = cat === 'pesi' ? '🏁 Salva Seduta Sala Pesi' : cat === 'altro' ? '🏁 Salva Attività' : '🏁 Salva Seduta Calisthenics';
 }
 
 // ==================== CONFIGURAZIONE E STATO ====================
@@ -122,6 +259,9 @@ document.addEventListener('DOMContentLoaded', () => {
   
   if (activeWorkoutId) selectWorkoutSubtab(activeWorkoutId);
   switchMainTab('home');
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape') closeAppMenu();
+  });
   initNetworkStatus();
   registerServiceWorker();
   try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) {}
@@ -132,7 +272,7 @@ function checkWelcomeScreen() {
   const standardSec = document.getElementById('standardWorkoutInterface');
   const hasWorkouts = Object.keys(userWorkouts).length > 0;
 
-  if (!hasWorkouts && activeWorkoutId !== 'calisthenics' && activeWorkoutId !== 'free_pesi') {
+  if (!hasWorkouts && !['calisthenics', 'free_pesi', 'free_altro'].includes(activeWorkoutId)) {
     if (welcomeSec) welcomeSec.style.display = 'flex';
     if (standardSec) standardSec.style.display = 'none';
   } else {
@@ -152,10 +292,13 @@ function resetToWelcomeState() {
 }
 
 function loadDemoWorkouts() {
-  userWorkouts = { ...INITIAL_WORKOUTS };
-  safeSet('gym_user_workouts', JSON.stringify(userWorkouts));
+  const nextWorkouts = { ...INITIAL_WORKOUTS };
+  if (!safeSetBatch([
+    ['gym_user_workouts', JSON.stringify(nextWorkouts)],
+    ['gym_active_workout_id', 'scheda_a']
+  ])) return;
+  userWorkouts = nextWorkouts;
   activeWorkoutId = 'scheda_a';
-  safeSet('gym_active_workout_id', activeWorkoutId);
   checkWelcomeScreen();
   renderSubtabs();
   selectWorkoutSubtab('scheda_a');
@@ -172,13 +315,14 @@ function startWithCalisthenics() {
 function loadAllStoredData() {
   const savedWorkouts = localStorage.getItem('gym_user_workouts');
   if (savedWorkouts) {
-    try { userWorkouts = JSON.parse(savedWorkouts); } catch (e) { console.error(e); }
+    userWorkouts = parseStoredJson('gym_user_workouts', savedWorkouts, {});
   } else {
     userWorkouts = {}; // Pulito di default se prima visita
   }
 
   const savedActiveId = localStorage.getItem('gym_active_workout_id');
-  if (savedActiveId && (userWorkouts[savedActiveId] || savedActiveId === 'calisthenics' || savedActiveId === 'free_pesi')) {
+  const hasSavedWorkout = savedActiveId && Object.prototype.hasOwnProperty.call(userWorkouts, savedActiveId);
+  if (savedActiveId && (hasSavedWorkout || ['calisthenics', 'free_pesi', 'free_altro'].includes(savedActiveId))) {
     activeWorkoutId = savedActiveId;
   } else {
     activeWorkoutId = Object.keys(userWorkouts)[0] || '';
@@ -186,27 +330,27 @@ function loadAllStoredData() {
 
   const savedSession = localStorage.getItem('gym_active_session_inputs');
   if (savedSession) {
-    try { activeSessionInputs = JSON.parse(savedSession); } catch (e) { console.error(e); }
+    activeSessionInputs = parseStoredJson('gym_active_session_inputs', savedSession, {});
   }
 
   const savedWarmup = localStorage.getItem('gym_active_warmup');
   if (savedWarmup) {
-    try { activeWarmupState = JSON.parse(savedWarmup); } catch (e) { console.error(e); }
+    activeWarmupState = parseStoredJson('gym_active_warmup', savedWarmup, {});
   }
 
   const savedCali = localStorage.getItem('gym_cali_exercises');
   if (savedCali) {
-    try { caliExercises = JSON.parse(savedCali); } catch (e) { console.error(e); }
+    caliExercises = parseStoredJson('gym_cali_exercises', savedCali, []);
   }
 
   const savedHistory = localStorage.getItem('gym_workout_history');
   if (savedHistory) {
-    try { workoutHistory = JSON.parse(savedHistory); } catch (e) { console.error(e); }
+    workoutHistory = parseStoredJson('gym_workout_history', savedHistory, []);
   }
 
   const savedBody = localStorage.getItem('gym_body_profile');
   if (savedBody) {
-    try { bodyProfile = JSON.parse(savedBody); } catch (e) { console.error(e); }
+    bodyProfile = parseStoredJson('gym_body_profile', savedBody, bodyProfile);
   }
 }
 
@@ -245,6 +389,12 @@ function renderSubtabs() {
   caliBtn.onclick = () => selectWorkoutSubtab('calisthenics');
   nav.appendChild(caliBtn);
 
+  const otherBtn = document.createElement('button');
+  otherBtn.className = `subtab-btn ${activeWorkoutId === 'free_altro' ? 'active' : ''}`;
+  otherBtn.textContent = '🏃 Altro libero';
+  otherBtn.onclick = () => selectWorkoutSubtab('free_altro');
+  nav.appendChild(otherBtn);
+
   // + Nuova Scheda
   const addBtn = document.createElement('button');
   addBtn.className = 'subtab-btn add-tab-btn';
@@ -261,8 +411,8 @@ function selectWorkoutSubtab(id) {
   const routineSec = document.getElementById('activeWorkoutSection');
   const caliSec = document.getElementById('sectionCalisthenics');
 
-  if (id === 'calisthenics' || id === 'free_pesi') {
-    setFreeCategory(id === 'free_pesi' ? 'pesi' : 'calisthenics');
+  if (id === 'calisthenics' || id === 'free_pesi' || id === 'free_altro') {
+    setFreeCategory(id === 'free_pesi' ? 'pesi' : id === 'free_altro' ? 'altro' : 'calisthenics');
     routineSec.style.display = 'none';
     caliSec.style.display = 'block';
     renderCalisthenics();
@@ -314,7 +464,7 @@ function renderActiveWorkoutView() {
           <div class="stepper-box">
             <button class="stepper-btn" onclick="stepValue('${setKey}', 'kg', -1)">-</button>
             <input type="number" step="0.5" class="stepper-input" id="kg_${setKey}" 
-              placeholder="${phKg(ex.name, s, 'Kg')}" value="${savedSet.kg}" 
+              placeholder="${esc(phKg(ex.name, s, 'Kg'))}" value="${esc(savedSet.kg)}" 
               oninput="handleSetInput('${setKey}', 'kg', this.value)">
             <button class="stepper-btn" onclick="stepValue('${setKey}', 'kg', 1)">+</button>
           </div>
@@ -322,8 +472,8 @@ function renderActiveWorkoutView() {
           <!-- Stepper Reps -->
           <div class="stepper-box">
             <button class="stepper-btn" onclick="stepValue('${setKey}', 'reps', -1)">-</button>
-            <input type="number" class="stepper-input" id="reps_${setKey}" 
-              placeholder="${phReps(ex.name, s)}" value="${savedSet.reps}" 
+            <input type="text" inputmode="decimal" class="stepper-input" id="reps_${setKey}" 
+              placeholder="${esc(phReps(ex.name, s))}" value="${esc(savedSet.reps)}" 
               oninput="handleSetInput('${setKey}', 'reps', this.value)">
             <button class="stepper-btn" onclick="stepValue('${setKey}', 'reps', 1)">+</button>
           </div>
@@ -347,11 +497,11 @@ function renderActiveWorkoutView() {
           <div class="exercise-name">${exIdx + 1}. ${esc(ex.name)}</div>
         </div>
         <div class="exercise-meta">
-          <span class="badge target-reps">🎯 ${ex.sets} × ${ex.targetReps}</span>
+          <span class="badge target-reps">🎯 ${ex.sets} serie × ${esc(ex.targetReps)}</span>
           <span class="badge rest-time">⏱️ ${ex.rest}s rec</span>
           ${lastBtn(ex)}
         </div>
-        ${lastPerf ? `<div class="last-time-badge">${lastPerf}</div>` : ''}
+        ${lastPerf ? `<div class="last-time-badge">${esc(lastPerf)}</div>` : ''}
       </div>
       <div class="sets-list">
         ${setsHtml}
@@ -436,8 +586,8 @@ function completeActiveWorkout() {
       if (data && (data.kg || data.reps || data.diff)) {
         sets.push({
           setNum: s,
-          kg: data.kg || 0,
-          reps: data.reps || 0,
+          kg: data.kg || '',
+          reps: data.reps || '',
           diff: data.diff || 'none'
         });
         totalSetsDone++;
@@ -468,8 +618,11 @@ function completeActiveWorkout() {
   };
 
   workoutHistory.unshift(historyEntry);
+  if (!safeSet('gym_workout_history', JSON.stringify(workoutHistory))) {
+    workoutHistory.shift();
+    return;
+  }
   sessionDateOverride = null; hideSessionBanner();
-  safeSet('gym_workout_history', JSON.stringify(workoutHistory));
 
   // Reset inputs
   activeSessionInputs[activeWorkoutId] = {};
@@ -500,7 +653,7 @@ function copyActiveWorkoutToClipboard() {
   const sessionData = activeSessionInputs[activeWorkoutId] || {};
 
   let tsv = "Data\tScheda\tEsercizio\tSerie\tCarico_Kg\tRipetizioni\tDifficoltà\n";
-  const today = localDateStr();
+  const today = sessionDateOverride || localDateStr();
 
   let count = 0;
   workout.exercises.forEach(ex => {
@@ -509,7 +662,7 @@ function copyActiveWorkoutToClipboard() {
       const data = sessionData[setKey];
       if (data && (data.kg || data.reps || data.diff)) {
         const diffText = data.diff === 'easy' ? '🟢 Facile' : data.diff === 'med' ? '🟡 Medio' : data.diff === 'hard' ? '🔴 Difficile' : '';
-        tsv += `${today}\t${workout.name}\t${ex.name}\t${s}\t${data.kg || 0}\t${data.reps || 0}\t${diffText}\n`;
+        tsv += [today, workout.name, ex.name, s, data.kg || '', data.reps || '', diffText].map(tsvField).join('\t') + '\n';
         count++;
       }
     }
@@ -520,9 +673,7 @@ function copyActiveWorkoutToClipboard() {
     return;
   }
 
-  navigator.clipboard.writeText(tsv).then(() => {
-    showToast('📋 Copiato negli appunti per Google Fogli!');
-  });
+  copyTextToClipboard(tsv, '📋 Copiato negli appunti per Google Fogli!');
 }
 
 function deleteCurrentWorkout() {
@@ -530,11 +681,15 @@ function deleteCurrentWorkout() {
   if (!workout) return;
   if (!confirm(`Sei sicuro di voler eliminare definitivamente la scheda "${workout.name}"?`)) return;
 
-  delete userWorkouts[activeWorkoutId];
-  safeSet('gym_user_workouts', JSON.stringify(userWorkouts));
-
-  activeWorkoutId = Object.keys(userWorkouts)[0] || 'calisthenics';
-  safeSet('gym_active_workout_id', activeWorkoutId);
+  const nextWorkouts = { ...userWorkouts };
+  delete nextWorkouts[activeWorkoutId];
+  const nextActiveWorkoutId = Object.keys(nextWorkouts)[0] || 'calisthenics';
+  if (!safeSetBatch([
+    ['gym_user_workouts', JSON.stringify(nextWorkouts)],
+    ['gym_active_workout_id', nextActiveWorkoutId]
+  ])) return;
+  userWorkouts = nextWorkouts;
+  activeWorkoutId = nextActiveWorkoutId;
 
   renderSubtabs();
   checkWelcomeScreen();
@@ -554,7 +709,7 @@ function renderCalisthenics() {
     container.innerHTML = `
       <div style="text-align: center; color: var(--text-muted); padding: 24px 10px; background: var(--bg-card); border-radius: var(--radius); border: 1px dashed var(--border-color);">
         Nessun esercizio aggiunto per oggi.<br>
-        Usa il campo in alto per aggiungere gli esercizi preparati dal tuo istruttore!
+        Aggiungi esercizi o attività, imposta quante serie vuoi e indica un obiettivo in ripetizioni, secondi, metri o altro.
       </div>
     `;
     return;
@@ -583,7 +738,7 @@ function renderCalisthenics() {
           <div class="stepper-box">
             <button class="stepper-btn" onclick="stepCaliValue('${setKey}', 'kg', -1)">-</button>
             <input type="number" step="0.5" class="stepper-input" id="kg_${setKey}" 
-              placeholder="${phKg(ex.name, s, '+Kg')}" value="${savedSet.kg}" 
+              placeholder="${esc(phKg(ex.name, s, '+Kg'))}" value="${esc(savedSet.kg)}" 
               oninput="handleCaliSetInput('${setKey}', 'kg', this.value)">
             <button class="stepper-btn" onclick="stepCaliValue('${setKey}', 'kg', 1)">+</button>
           </div>
@@ -591,8 +746,8 @@ function renderCalisthenics() {
           <!-- Stepper Reps / Sec -->
           <div class="stepper-box">
             <button class="stepper-btn" onclick="stepCaliValue('${setKey}', 'reps', -1)">-</button>
-            <input type="number" class="stepper-input" id="reps_${setKey}" 
-              placeholder="${phReps(ex.name, s)}" value="${savedSet.reps}" 
+            <input type="text" inputmode="decimal" class="stepper-input" id="reps_${setKey}" 
+              placeholder="${esc(phReps(ex.name, s))}" value="${esc(savedSet.reps)}" 
               oninput="handleCaliSetInput('${setKey}', 'reps', this.value)">
             <button class="stepper-btn" onclick="stepCaliValue('${setKey}', 'reps', 1)">+</button>
           </div>
@@ -618,9 +773,13 @@ function renderCalisthenics() {
             onclick="removeCalisthenicsExercise('${ex.id}')">✕</button>
         </div>
         <div class="exercise-meta">
-          <span class="badge target-reps">🎯 ${ex.sets} serie</span>
-          <button style="background: var(--bg-input); border: 1px solid var(--border-color); color: var(--text-muted); border-radius: 6px; padding: 2px 8px; font-size: 0.72rem; cursor: pointer;" 
-            onclick="addSetToCaliExercise('${ex.id}')">+ Aggiungi Serie</button>
+          <label class="free-exercise-config">Serie
+            <input type="number" class="app-input free-exercise-sets" min="1" step="1" value="${ex.sets}" aria-label="Numero di serie per ${esc(ex.name)}">
+          </label>
+          <label class="free-exercise-config">Obiettivo
+            <input type="text" class="app-input free-exercise-target" value="${esc(ex.targetReps || '')}" placeholder="reps, secondi, metri..." aria-label="Obiettivo per ${esc(ex.name)}">
+          </label>
+          <button class="action-btn btn-secondary free-exercise-save" type="button" onclick="updateCaliExerciseConfig('${ex.id}')">Applica</button>
           ${lastBtn(ex)}
         </div>
       </div>
@@ -641,31 +800,44 @@ function addCalisthenicsExercise() {
   const newEx = {
     id: 'cali_' + Date.now(),
     name: name,
-    sets: (getLastSets(name) || []).length || 3,
-    targetReps: 'Libero',
+    sets: 1,
+    targetReps: '',
     rest: 60
   };
 
-  caliExercises.push(newEx);
-  saveFreeBoard();
+  const nextExercises = [...caliExercises, newEx];
+  if (!saveFreeBoard(nextExercises)) return;
+  caliExercises = nextExercises;
   input.value = '';
   renderCalisthenics();
   showToast(`Aggiunto: ${name}`);
 }
 
 function removeCalisthenicsExercise(id) {
-  caliExercises = caliExercises.filter(e => e.id !== id);
-  saveFreeBoard();
+  const nextExercises = caliExercises.filter(e => e.id !== id);
+  if (!saveFreeBoard(nextExercises)) return;
+  caliExercises = nextExercises;
   renderCalisthenics();
 }
 
-function addSetToCaliExercise(id) {
-  const ex = caliExercises.find(e => e.id === id);
-  if (ex) {
-    ex.sets++;
-    saveFreeBoard();
-    renderCalisthenics();
+function updateCaliExerciseConfig(id) {
+  const exercise = caliExercises.find(item => item.id === id);
+  const card = document.getElementById(`card_${id}`);
+  if (!exercise || !card) return;
+
+  const setsValue = Number(card.querySelector('.free-exercise-sets').value);
+  if (!Number.isSafeInteger(setsValue) || setsValue < 1) {
+    alert('Il numero di serie deve essere un intero maggiore di zero.');
+    return;
   }
+
+  const nextExercises = caliExercises.map(item => item.id === id
+    ? { ...item, sets: setsValue, targetReps: card.querySelector('.free-exercise-target').value.trim() }
+    : item);
+  if (!saveFreeBoard(nextExercises)) return;
+  caliExercises = nextExercises;
+  renderCalisthenics();
+  showToast('Esercizio aggiornato');
 }
 
 function handleCaliSetInput(setKey, field, val) {
@@ -729,8 +901,8 @@ function completeCalisthenicsWorkout() {
       if (data && (data.kg || data.reps || data.diff)) {
         sets.push({
           setNum: s,
-          kg: data.kg || 0,
-          reps: data.reps || 0,
+          kg: data.kg || '',
+          reps: data.reps || '',
           diff: data.diff || 'none'
         });
         totalSetsDone++;
@@ -754,15 +926,21 @@ function completeCalisthenicsWorkout() {
     id: Date.now(),
     date: dateStr,
     time: timeStr,
-    workout: freeLabel(),
-    category: freeCategory,
+    workout: sessionWorkoutTitleOverride || freeLabel(),
+    category: sessionWorkoutCategoryOverride || freeCategory,
     warmupDone: true,
     exercises: exercisesResults
   };
 
   workoutHistory.unshift(historyEntry);
-  sessionDateOverride = null; hideSessionBanner();
-  safeSet('gym_workout_history', JSON.stringify(workoutHistory));
+  if (!safeSet('gym_workout_history', JSON.stringify(workoutHistory))) {
+    workoutHistory.shift();
+    return;
+  }
+  sessionDateOverride = null;
+  sessionWorkoutTitleOverride = null;
+  sessionWorkoutCategoryOverride = null;
+  hideSessionBanner();
 
   activeSessionInputs[freeKey()] = {};
   saveActiveSession();
@@ -771,12 +949,12 @@ function completeCalisthenicsWorkout() {
   renderCalendar();
   renderAnalytics();
 
-  showToast('🏆 Seduta ' + freeLabel() + ' salvata nel calendario!');
+  showToast('🏆 Seduta ' + historyEntry.workout + ' salvata nel calendario!');
   switchMainTab('calendar');
 }
 
 function resetCalisthenicsSession() {
-  if (!confirm('Vuoi azzerare i dati inseriti per questa seduta di Calisthenics?')) return;
+  if (!confirm(`Vuoi azzerare i dati inseriti per questa seduta di ${freeLabel()}?`)) return;
   activeSessionInputs[freeKey()] = {};
   saveActiveSession();
   renderCalisthenics();
@@ -786,7 +964,7 @@ function resetCalisthenicsSession() {
 function copyCalisthenicsToClipboard() {
   const sessionData = activeSessionInputs[freeKey()] || {};
   let tsv = "Data\tAttività\tEsercizio\tSerie\tZavorra_Kg\tReps\tDifficoltà\n";
-  const today = localDateStr();
+  const today = sessionDateOverride || localDateStr();
 
   let count = 0;
   caliExercises.forEach(ex => {
@@ -795,7 +973,8 @@ function copyCalisthenicsToClipboard() {
       const data = sessionData[setKey];
       if (data && (data.kg || data.reps || data.diff)) {
         const diffText = data.diff === 'easy' ? '🟢 Facile' : data.diff === 'med' ? '🟡 Medio' : data.diff === 'hard' ? '🔴 Difficile' : '';
-        tsv += `${today}\t${freeLabel()}\t${ex.name}\t${s}\t${data.kg || 0}\t${data.reps || 0}\t${diffText}\n`;
+        tsv += [today, sessionWorkoutTitleOverride || freeLabel(), ex.name, s, data.kg || '', data.reps || '', diffText]
+          .map(tsvField).join('\t') + '\n';
         count++;
       }
     }
@@ -806,9 +985,7 @@ function copyCalisthenicsToClipboard() {
     return;
   }
 
-  navigator.clipboard.writeText(tsv).then(() => {
-    showToast('📋 Copiato negli appunti per Google Fogli!');
-  });
+  copyTextToClipboard(tsv, '📋 Copiato negli appunti per Google Fogli!');
 }
 
 // ==================== TIMER CALISTHENICS VERSATILE ====================
@@ -1136,7 +1313,7 @@ function updateDayDetailsView(dateStr, workouts) {
         w.exercises.forEach(ex => {
           const setsStr = ex.sets.map(s => {
             const badge = s.diff === 'easy' ? '🟢' : s.diff === 'med' ? '🟡' : s.diff === 'hard' ? '🔴' : '';
-            return `S${s.setNum}: ${s.kg}kg×${s.reps} ${badge}`;
+            return `S${esc(s.setNum)}: ${esc(formatRecordedSet(s))} ${badge}`;
           }).join(' | ');
 
           exercisesHtml += `
@@ -1156,7 +1333,7 @@ function updateDayDetailsView(dateStr, workouts) {
         <div style="background: var(--bg-input); border-radius: 8px; padding: 10px; margin-bottom: 8px;">
           <div style="display: flex; justify-content: space-between; font-weight: 700; color: var(--accent); margin-bottom: 6px;">
             <span>${esc(w.workout)} ${diffBadge}</span>
-            <span style="font-size: 0.75rem; color: var(--text-muted);">🕒 ${w.time || ''}</span> <button class="action-btn btn-secondary" style="padding:2px 8px;font-size:.7rem" onclick="deleteHistoryEntry(${w.id})">🗑️</button>
+            <span style="font-size: 0.75rem; color: var(--text-muted);">🕒 ${esc(w.time || '')}</span> <button class="action-btn btn-secondary" style="padding:2px 8px;font-size:.7rem" data-delete-history="${w.id}">🗑️</button>
           </div>
           ${exercisesHtml}
         </div>
@@ -1179,12 +1356,15 @@ function updateDayDetailsView(dateStr, workouts) {
     </div>
     ${workoutsHtml}
   `;
+  detailsEl.querySelectorAll('[data-delete-history]').forEach(button => {
+    button.addEventListener('click', () => deleteHistoryEntry(Number(button.dataset.deleteHistory)));
+  });
 }
 
 // Modal Registra da Calendario
 function openCalendarLogModal(dateStr) {
-  const [y, m, d] = dateStr.split('-');
-  document.getElementById('calLogModalTitle').textContent = `Registra per il ${d}/${m}/${y}`;
+  document.getElementById('calLogDate').value = dateStr;
+  updateCalendarLogDateTitle();
 
   // Popola select routine
   const routineSelect = document.getElementById('calLogRoutineSelect');
@@ -1203,6 +1383,17 @@ function openCalendarLogModal(dateStr) {
 
   handleCalLogTypeChange();
   document.getElementById('calendarLogModal').classList.add('active');
+}
+
+function updateCalendarLogDateTitle() {
+  const dateStr = document.getElementById('calLogDate').value;
+  const title = document.getElementById('calLogModalTitle');
+  if (!dateStr) {
+    title.textContent = 'Registra Allenamento';
+    return;
+  }
+  const [y, m, d] = dateStr.split('-');
+  title.textContent = `Registra per il ${d}/${m}/${y}`;
 }
 
 function closeCalendarLogModal() {
@@ -1235,6 +1426,12 @@ function selectCalLogDiff(diff) {
 }
 
 function confirmCalendarWorkoutLog() {
+  const dateStr = document.getElementById('calLogDate').value;
+  if (!dateStr) {
+    alert('Seleziona la data della seduta.');
+    return;
+  }
+
   const type = document.getElementById('calLogTypeSelect').value;
   let workoutTitle = 'Allenamento';
   let category = type;
@@ -1259,7 +1456,7 @@ function confirmCalendarWorkoutLog() {
 
   const historyEntry = {
     id: Date.now(),
-    date: calSelectedDateStr,
+    date: dateStr,
     time: timeStr,
     workout: workoutTitle,
     category: category,
@@ -1268,9 +1465,13 @@ function confirmCalendarWorkoutLog() {
     exercises: []
   };
 
+  setCalendarSelectedDate(dateStr);
   workoutHistory.unshift(historyEntry);
+  if (!safeSet('gym_workout_history', JSON.stringify(workoutHistory))) {
+    workoutHistory.shift();
+    return;
+  }
   sessionDateOverride = null; hideSessionBanner();
-  safeSet('gym_workout_history', JSON.stringify(workoutHistory));
 
   closeCalendarLogModal();
   renderCalendar();
@@ -1287,7 +1488,7 @@ function getLastPerformance(exerciseName) {
     if (match && match.sets && match.sets.length > 0) {
       const summary = match.sets
         .filter(s => s.reps || s.kg)
-        .map(s => `${s.kg || 0}kg×${s.reps || 0}${s.diff === 'easy' ? ' 🟢' : s.diff === 'med' ? ' 🟡' : s.diff === 'hard' ? ' 🔴' : ''}`)
+        .map(s => `${formatRecordedSet(s)}${s.diff === 'easy' ? ' 🟢' : s.diff === 'med' ? ' 🟡' : s.diff === 'hard' ? ' 🔴' : ''}`)
         .join(' | ');
       return summary ? `Ultima volta: ${summary}` : null;
     }
@@ -1308,7 +1509,7 @@ function renderAnalytics() {
   monday.setDate(now.getDate() - currentDay);
   monday.setHours(0, 0, 0, 0);
 
-  const thisWeekWorkouts = workoutHistory.filter(w => new Date(w.date) >= monday);
+  const thisWeekWorkouts = workoutHistory.filter(w => localDateFromString(w.date) >= monday);
   if (statWeeklyEl) statWeeklyEl.textContent = thisWeekWorkouts.length;
 
   // Bilancio sforzo 🟢 🟡 🔴
@@ -1402,24 +1603,26 @@ function renderExerciseProgression(exerciseName) {
     const prev = i > 0 ? chron[i - 1] : null;
 
     // Calcolo medie carico e fatica
-    const currMaxKg = Math.max(...curr.sets.map(s => parseFloat(s.kg) || 0));
+    const currMaxKg = getMaxRecordedLoad(curr.sets);
     const currDiffScore = calcAvgDiffScore(curr.sets);
 
     let smartBadgeHtml = '';
     if (prev) {
-      const prevMaxKg = Math.max(...prev.sets.map(s => parseFloat(s.kg) || 0));
+      const prevMaxKg = getMaxRecordedLoad(prev.sets);
       const prevDiffScore = calcAvgDiffScore(prev.sets);
 
-      const kgDiff = currMaxKg - prevMaxKg;
+      const kgDiff = currMaxKg !== null && prevMaxKg !== null ? currMaxKg - prevMaxKg : null;
 
-      if (kgDiff > 0) {
+      if (kgDiff !== null && kgDiff > 0) {
         smartBadgeHtml = `<span class="smart-badge badge-gain">🔥 +${kgDiff}kg Progresso</span>`;
-      } else if (kgDiff === 0 && currDiffScore < prevDiffScore) {
+      } else if ((kgDiff === 0 || kgDiff === null) && currDiffScore < prevDiffScore) {
         smartBadgeHtml = `<span class="smart-badge badge-adapt">⚡ Adattamento (Meno fatica)</span>`;
       } else if (kgDiff === 0 && currDiffScore === prevDiffScore) {
         smartBadgeHtml = `<span class="smart-badge badge-stable">➡️ Mantenimento Stabile</span>`;
-      } else if (kgDiff < 0 || currDiffScore > prevDiffScore + 0.5) {
+      } else if ((kgDiff !== null && kgDiff < 0) || currDiffScore > prevDiffScore + 0.5) {
         smartBadgeHtml = `<span class="smart-badge badge-fatigue">⚠️ Fatica / Possibile Stallo</span>`;
+      } else if (kgDiff === null) {
+        smartBadgeHtml = `<span class="smart-badge badge-stable">➡️ Carico non confrontabile</span>`;
       } else {
         smartBadgeHtml = `<span class="smart-badge badge-stable">➡️ Stabile</span>`;
       }
@@ -1434,7 +1637,7 @@ function renderExerciseProgression(exerciseName) {
   analyzed.forEach(item => {
     const setsStr = item.sets.map(s => {
       const badge = s.diff === 'easy' ? '🟢' : s.diff === 'med' ? '🟡' : s.diff === 'hard' ? '🔴' : '';
-      return `${s.kg}kg × ${s.reps} ${badge}`;
+      return `${esc(formatRecordedSet(s))} ${badge}`;
     }).join(' | ');
 
     html += `
@@ -1468,7 +1671,7 @@ function renderTrendChart(occurrences, exerciseName) {
 
   const chron = [...occurrences].reverse();
   const dataPoints = chron.map(o => {
-    const maxKg = Math.max(...o.sets.map(s => parseFloat(s.kg) || 0));
+    const maxKg = getMaxRecordedLoad(o.sets);
     const avgDiff = calcAvgDiffScore(o.sets);
     return {
       date: o.date.slice(5),
@@ -1476,7 +1679,11 @@ function renderTrendChart(occurrences, exerciseName) {
       kg: maxKg,
       avgDiff: avgDiff
     };
-  });
+  }).filter(point => point.kg !== null);
+  if (!dataPoints.length) {
+    chartBox.style.display = 'none';
+    return;
+  }
 
   const width = 340;
   const height = 150;
@@ -1608,7 +1815,7 @@ function renderQuickChips() {
     btn.type = 'button';
     btn.className = 'chip-btn';
     btn.textContent = '+ ' + name;
-    btn.onclick = () => addExerciseToEditor(name, 3, '8/10', 90);
+    btn.onclick = () => addExerciseToEditor(name, 1, '8/10', 90);
     container.appendChild(btn);
   });
 }
@@ -1622,7 +1829,7 @@ function openCreateWorkoutModal() {
   renderQuickChips();
 
   // Aggiungi un primo esercizio per iniziare
-  addExerciseToEditor('Affondi Bulgari', 3, '3x8', 90);
+  addExerciseToEditor('Affondi Bulgari', 1, '8/10', 90);
 
   document.getElementById('workoutEditorModal').dataset.mode = 'create';
   document.getElementById('workoutEditorModal').classList.add('active');
@@ -1652,7 +1859,7 @@ function closeWorkoutEditorModal() {
   document.getElementById('workoutEditorModal').classList.remove('active');
 }
 
-function addExerciseToEditor(name = '', sets = 3, reps = '8/10', rest = 90) {
+function addExerciseToEditor(name = '', sets = 1, reps = '8/10', rest = 90) {
   editorExerciseCounter++;
   const container = document.getElementById('editorExercisesList');
   const div = document.createElement('div');
@@ -1713,13 +1920,19 @@ function saveWorkoutFromEditor() {
 
   const rows = document.querySelectorAll('#editorExercisesList > div');
   const exercises = [];
+  let invalidSets = false;
   rows.forEach((r, idx) => {
     const exName = r.querySelector('.ex-name').value.trim();
-    const sets = parseInt(r.querySelector('.ex-sets').value, 10) || 3;
+    const sets = Number(r.querySelector('.ex-sets').value);
     const reps = r.querySelector('.ex-reps').value.trim() || '8/10';
     const rest = parseInt(r.querySelector('.ex-rest').value, 10) || 90;
 
     if (exName) {
+      if (!Number.isSafeInteger(sets) || sets < 1) {
+        alert(`Il numero di serie per "${exName}" deve essere un intero maggiore di zero.`);
+        invalidSets = true;
+        return;
+      }
       exercises.push({
         id: `ex_${Date.now()}_${idx}`,
         name: exName,
@@ -1730,30 +1943,41 @@ function saveWorkoutFromEditor() {
     }
   });
 
+  if (invalidSets) return;
   if (exercises.length === 0) {
     alert('Aggiungi almeno un esercizio alla scheda.');
     return;
   }
 
-  const mode = document.getElementById('workoutEditorModal').dataset.mode;
+  const editor = document.getElementById('workoutEditorModal');
+  const mode = editor.dataset.mode;
   let workoutId = '';
+  let nextActiveWorkoutId = activeWorkoutId;
+  const nextWorkouts = { ...userWorkouts };
 
   if (mode === 'edit') {
-    workoutId = document.getElementById('workoutEditorModal').dataset.targetId;
-    userWorkouts[workoutId].name = name;
-    userWorkouts[workoutId].exercises = exercises;
+    workoutId = editor.dataset.targetId;
+    if (!Object.prototype.hasOwnProperty.call(nextWorkouts, workoutId)) {
+      alert('La scheda da modificare non è più disponibile.');
+      return;
+    }
+    nextWorkouts[workoutId] = { ...nextWorkouts[workoutId], name, exercises };
   } else {
     workoutId = 'routine_' + Date.now();
-    userWorkouts[workoutId] = {
+    nextWorkouts[workoutId] = {
       id: workoutId,
       name: name,
       exercises: exercises
     };
-    activeWorkoutId = workoutId;
+    nextActiveWorkoutId = workoutId;
   }
 
-  safeSet('gym_user_workouts', JSON.stringify(userWorkouts));
-  safeSet('gym_active_workout_id', activeWorkoutId);
+  if (!safeSetBatch([
+    ['gym_user_workouts', JSON.stringify(nextWorkouts)],
+    ['gym_active_workout_id', nextActiveWorkoutId]
+  ])) return;
+  userWorkouts = nextWorkouts;
+  activeWorkoutId = nextActiveWorkoutId;
 
   closeWorkoutEditorModal();
   checkWelcomeScreen();
@@ -1766,20 +1990,237 @@ function saveWorkoutFromEditor() {
 function switchImportTab(tab) {
   const fileSec = document.getElementById('importFileSection');
   const textSec = document.getElementById('importTextSection');
+  const photoSec = document.getElementById('importPhotoSection');
   const fileBtn = document.getElementById('importTabFileBtn');
   const textBtn = document.getElementById('importTabTextBtn');
+  const photoBtn = document.getElementById('importTabPhotoBtn');
+  const selectedTab = ['file', 'text', 'photo'].includes(tab) ? tab : 'file';
+  if (fileSec) fileSec.style.display = selectedTab === 'file' ? 'block' : 'none';
+  if (textSec) textSec.style.display = selectedTab === 'text' ? 'block' : 'none';
+  if (photoSec) photoSec.style.display = selectedTab === 'photo' ? 'block' : 'none';
+  [[fileBtn, 'file'], [textBtn, 'text'], [photoBtn, 'photo']].forEach(([button, buttonTab]) => {
+    if (!button) return;
+    button.classList.toggle('active', selectedTab === buttonTab);
+    button.setAttribute('aria-pressed', String(selectedTab === buttonTab));
+  });
+}
 
-  if (tab === 'file') {
-    if (fileSec) fileSec.style.display = 'block';
-    if (textSec) textSec.style.display = 'none';
-    if (fileBtn) fileBtn.classList.add('active');
-    if (textBtn) textBtn.classList.remove('active');
-  } else {
-    if (fileSec) fileSec.style.display = 'none';
-    if (textSec) textSec.style.display = 'block';
-    if (fileBtn) fileBtn.classList.remove('active');
-    if (textBtn) textBtn.classList.add('active');
+let workoutOcrWorker = null;
+let workoutPhotoPreviewUrl = null;
+let photoOcrGeneration = 0;
+
+function setPhotoOcrStatus(message, isError = false) {
+  const status = document.getElementById('photoOcrStatus');
+  if (!status) return;
+  status.textContent = message;
+  status.style.display = message ? 'block' : 'none';
+  status.style.color = isError ? 'var(--hard-border)' : 'var(--text-muted)';
+}
+
+function loadWorkoutPhoto(file) {
+  return new Promise((resolve, reject) => {
+    const imageUrl = URL.createObjectURL(file);
+    const image = new Image();
+    image.onload = () => {
+      URL.revokeObjectURL(imageUrl);
+      resolve(image);
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(imageUrl);
+      reject(new Error('Impossibile aprire l’immagine. Usa una foto JPG, PNG o WebP.'));
+    };
+    image.src = imageUrl;
+  });
+}
+
+async function preparePhotoForOcr(file) {
+  const image = typeof createImageBitmap === 'function'
+    ? await createImageBitmap(file)
+    : await loadWorkoutPhoto(file);
+  const maxDimension = 2400;
+  const scale = Math.min(1, maxDimension / Math.max(image.width, image.height));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(image.width * scale));
+  canvas.height = Math.max(1, Math.round(image.height * scale));
+  const context = canvas.getContext('2d');
+  if (!context) throw new Error('Il browser non può elaborare le immagini.');
+  context.fillStyle = '#fff';
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.drawImage(image, 0, 0, canvas.width, canvas.height);
+  if (typeof image.close === 'function') image.close();
+  return canvas;
+}
+
+async function getWorkoutOcrWorker() {
+  if (typeof Tesseract === 'undefined' || typeof Tesseract.createWorker !== 'function') {
+    throw new Error('Il motore OCR non è disponibile. Ricarica l’app mentre sei online, poi riprova.');
   }
+  if (!workoutOcrWorker) {
+    workoutOcrWorker = await Tesseract.createWorker('ita', 1, {
+      workerPath: './vendor/tesseract/worker.min.js',
+      corePath: './',
+      langPath: '../tessdata',
+      gzip: false,
+      workerBlobURL: false,
+      logger: progress => {
+        if (progress.status === 'recognizing text') {
+          setPhotoOcrStatus(`Lettura della scheda: ${Math.round((progress.progress || 0) * 100)}%`);
+        } else if (progress.status) {
+          setPhotoOcrStatus(`Preparazione OCR: ${progress.status}…`);
+        }
+      }
+    });
+  }
+  return workoutOcrWorker;
+}
+
+async function recognizeWorkoutPhoto(event) {
+  const input = event.target;
+  const files = input.files ? Array.from(input.files) : [];
+  if (!files.length) return;
+  if (files.length > 4) {
+    setPhotoOcrStatus('Seleziona al massimo 4 foto per volta.', true);
+    input.value = '';
+    return;
+  }
+  if (files.some(file => !file.type.startsWith('image/'))) {
+    setPhotoOcrStatus('Seleziona solo file immagine.', true);
+    input.value = '';
+    return;
+  }
+  if (files.some(file => file.size > 20 * 1024 * 1024)) {
+    setPhotoOcrStatus('Una delle foto supera 20 MB. Ridimensionala o scegli immagini più leggere.', true);
+    input.value = '';
+    return;
+  }
+
+  const preview = document.getElementById('workoutPhotoPreview');
+  const results = document.getElementById('photoOcrResult');
+  const button = document.getElementById('preparePhotoDraftBtn');
+  const generation = ++photoOcrGeneration;
+  input.disabled = true;
+  if (preview) {
+    if (workoutPhotoPreviewUrl) URL.revokeObjectURL(workoutPhotoPreviewUrl);
+    workoutPhotoPreviewUrl = URL.createObjectURL(files[0]);
+    preview.src = workoutPhotoPreviewUrl;
+    preview.style.display = 'block';
+  }
+  if (results) results.style.display = 'none';
+  if (button) button.disabled = true;
+  setPhotoOcrStatus('Preparazione della foto sul dispositivo…');
+
+  try {
+    const worker = await getWorkoutOcrWorker();
+    const recognizedPages = [];
+    for (let index = 0; index < files.length; index++) {
+      const image = await preparePhotoForOcr(files[index]);
+      if (generation !== photoOcrGeneration) return;
+      setPhotoOcrStatus(files.length > 1
+        ? `Lettura pagina ${index + 1} di ${files.length}…`
+        : 'Lettura del testo della scheda…');
+      const { data } = await worker.recognize(image);
+      if (generation !== photoOcrGeneration) return;
+      const pageText = String(data.text || '').trim();
+      if (pageText) recognizedPages.push(files.length > 1 ? `Pagina ${index + 1}\n${pageText}` : pageText);
+    }
+    const text = recognizedPages.join('\n\n').trim();
+    if (!text) throw new Error('Non ho trovato testo leggibile. Prova con una foto più nitida e ben illuminata.');
+    document.getElementById('importPhotoText').value = text;
+    document.getElementById('importRoutineName').value = files[0].name.replace(/\.[^/.]+$/, '') || 'Scheda da foto';
+    if (results) results.style.display = 'block';
+    setPhotoOcrStatus('Testo riconosciuto. Controllalo e correggi gli errori prima di preparare la bozza.');
+  } catch (error) {
+    if (generation !== photoOcrGeneration) return;
+    console.error('GymTracker: riconoscimento OCR della foto non riuscito.', error);
+    setPhotoOcrStatus(error.message || 'Riconoscimento non riuscito. Riprova con un’altra immagine.', true);
+  } finally {
+    if (generation === photoOcrGeneration) {
+      if (button) button.disabled = false;
+      input.disabled = false;
+      input.value = '';
+    }
+  }
+}
+
+function parsePhotoWorkoutText(text) {
+  const exercises = [];
+  const ignoredLine = /^(scheda|giorno|allenamento|esercizio|esercizi|nome|serie|ripetizioni|ripetizione|reps?|recupero|pausa|note|programma|pagina)\b/i;
+  const headerPattern = /\b(\d{1,2})\s*[x×]\s*(\d{1,3}(?:\s*[-/]\s*\d{1,3})?)/i;
+  const trailingColumnsPattern = /^(.*?)[\t ]{2,}(\d{1,2})[\t ]+(\d{1,3}(?:\s*[-/]\s*\d{1,3})?)(?:[\t ]+(\d{1,3})\s*(?:s|sec|secondi|")?)?$/i;
+
+  text.split(/\r?\n/).forEach(rawLine => {
+    const line = rawLine.replace(/[•●▪]/g, ' ').replace(/\s+/g, ' ').trim();
+    if (!line || line.length < 2 || ignoredLine.test(line) || !/[a-zà-ÿ]/i.test(line)) return;
+
+    const columns = rawLine.match(trailingColumnsPattern);
+    if (columns && columns[1].trim()) {
+      exercises.push({
+        name: columns[1].replace(/[\s:|,-]+$/, '').trim(),
+        sets: Number(columns[2]),
+        targetReps: columns[3].replace(/\s+/g, ''),
+        rest: columns[4] ? Number(columns[4]) : 90
+      });
+      return;
+    }
+
+    const prescription = line.match(headerPattern);
+    if (prescription) {
+      const before = line.slice(0, prescription.index).replace(/[\s:|,-]+$/, '').trim();
+      const after = line.slice(prescription.index + prescription[0].length).trim();
+      const name = before || after.replace(/^[\s:|,-]+/, '').replace(/\s+\d{1,3}\s*(?:s|sec|secondi|")?.*$/i, '').trim();
+      if (!name) return;
+      const rest = after.match(/\b(\d{1,3})\s*(?:s|sec|secondi|")\b/i);
+      exercises.push({
+        name,
+        sets: Number(prescription[1]),
+        targetReps: prescription[2].replace(/\s+/g, ''),
+        rest: rest ? Number(rest[1]) : 90
+      });
+      return;
+    }
+
+    const cells = rawLine.split(/\t|\s{2,}|\s+[|]\s+|;/).map(cell => cell.trim()).filter(Boolean);
+    if (cells.length > 1) {
+      const name = cells[0].replace(/[\s:|,-]+$/, '').trim();
+      const values = cells.slice(1);
+      const sets = Number((values[0] || '').match(/\d{1,2}/)?.[0]);
+      const reps = (values[1] || '').match(/\d{1,3}(?:\s*[-/]\s*\d{1,3})?/);
+      const rest = (values[2] || '').match(/\d{1,3}/);
+      if (name && reps) {
+        exercises.push({ name, sets: Number.isSafeInteger(sets) && sets > 0 ? sets : 1, targetReps: reps[0].replace(/\s+/g, ''), rest: rest ? Number(rest[0]) : 90 });
+        return;
+      }
+    }
+
+    const name = line.replace(/^[\d.)\s-]+/, '').trim();
+    if (name.length >= 2 && !ignoredLine.test(name)) {
+      exercises.push({ name, sets: 1, targetReps: 'da verificare', rest: 90 });
+    }
+  });
+  return exercises;
+}
+
+function preparePhotoWorkoutDraft() {
+  const text = document.getElementById('importPhotoText').value.trim();
+  if (!text) {
+    alert('Prima acquisisci la foto o inserisci il testo riconosciuto.');
+    return;
+  }
+  const exercises = parsePhotoWorkoutText(text);
+  if (!exercises.length) {
+    alert('Non ho trovato esercizi nella foto. Correggi il testo riconosciuto oppure completa la scheda manualmente.');
+    return;
+  }
+
+  const routineName = document.getElementById('importRoutineName').value.trim() || 'Scheda da foto';
+  closeImportModal();
+  openCreateWorkoutModal();
+  document.getElementById('editorWorkoutName').value = routineName;
+  document.getElementById('editorExercisesList').innerHTML = '';
+  exercises.forEach(exercise => {
+    addExerciseToEditor(exercise.name, exercise.sets, exercise.targetReps, exercise.rest);
+  });
+  showToast(`Bozza pronta: verifica i ${exercises.length} esercizi prima di salvarla.`);
 }
 
 function parsePastedWorkoutText() {
@@ -1814,21 +2255,22 @@ function parsePastedWorkoutText() {
     const name = parts[0] ? parts[0].trim().replace(/^"|"$/g, '') : '';
     if (!name) return;
 
-    const repsRaw = parts[1] ? parts[1].trim() : '3x8';
+    const repsRaw = parts[1] ? parts[1].trim() : '';
     const restRaw = parts[2] ? parseInt(parts[2], 10) : 90;
 
-    // Rileva numero serie dalla stringa ripetizioni (es. 3X8 -> 3, 4x6 -> 4)
-    let sets = 3;
+    let sets = 1;
     const setsMatch = repsRaw.match(/(\d+)\s*[xX]/);
+    let targetReps = repsRaw;
     if (setsMatch) {
-      sets = parseInt(setsMatch[1], 10) || 3;
+      sets = parseInt(setsMatch[1], 10) || 1;
+      targetReps = repsRaw.slice(setsMatch[0].length).trim() || repsRaw;
     }
 
     detectedWorkouts[currentWorkoutName].push({
       id: `parsed_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
       name: name,
       sets: sets,
-      targetReps: repsRaw,
+      targetReps: targetReps,
       rest: isNaN(restRaw) ? 90 : restRaw
     });
   });
@@ -1839,18 +2281,24 @@ function parsePastedWorkoutText() {
     return;
   }
 
+  const nextWorkouts = { ...userWorkouts };
+  let nextActiveWorkoutId = activeWorkoutId;
   workoutKeys.forEach((k, idx) => {
     const routineId = 'routine_' + k.toLowerCase().replace(/[^a-z0-9]/g, '_') + '_' + (Date.now() + idx);
-    userWorkouts[routineId] = {
+    nextWorkouts[routineId] = {
       id: routineId,
       name: k,
       exercises: detectedWorkouts[k]
     };
-    if (idx === 0) activeWorkoutId = routineId;
+    if (idx === 0) nextActiveWorkoutId = routineId;
   });
 
-  safeSet('gym_user_workouts', JSON.stringify(userWorkouts));
-  safeSet('gym_active_workout_id', activeWorkoutId);
+  if (!safeSetBatch([
+    ['gym_user_workouts', JSON.stringify(nextWorkouts)],
+    ['gym_active_workout_id', nextActiveWorkoutId]
+  ])) return;
+  userWorkouts = nextWorkouts;
+  activeWorkoutId = nextActiveWorkoutId;
 
   closeImportModal();
   checkWelcomeScreen();
@@ -1860,15 +2308,35 @@ function parsePastedWorkoutText() {
 }
 
 function openImportModal() {
+  photoOcrGeneration++;
   document.getElementById('importPreviewBox').style.display = 'none';
   document.getElementById('excelFileInput').value = '';
+  const photoInput = document.getElementById('workoutPhotoInput');
+  photoInput.disabled = false;
+  photoInput.value = '';
+  if (workoutPhotoPreviewUrl) {
+    URL.revokeObjectURL(workoutPhotoPreviewUrl);
+    workoutPhotoPreviewUrl = null;
+  }
+  document.getElementById('workoutPhotoPreview').removeAttribute('src');
   if (document.getElementById('importPastedText')) document.getElementById('importPastedText').value = '';
+  document.getElementById('importPhotoText').value = '';
+  document.getElementById('photoOcrResult').style.display = 'none';
+  document.getElementById('workoutPhotoPreview').style.display = 'none';
+  setPhotoOcrStatus('');
   switchImportTab('file');
   document.getElementById('importModal').classList.add('active');
 }
 
 function closeImportModal() {
+  photoOcrGeneration++;
   document.getElementById('importModal').classList.remove('active');
+  document.getElementById('workoutPhotoInput').disabled = false;
+  if (workoutPhotoPreviewUrl) {
+    URL.revokeObjectURL(workoutPhotoPreviewUrl);
+    workoutPhotoPreviewUrl = null;
+  }
+  document.getElementById('workoutPhotoPreview').removeAttribute('src');
 }
 
 function handleFileDrop(e) {
@@ -1921,9 +2389,6 @@ function parseCSVContent(text) {
   const delim = f0.includes('\t') ? '\t' : (f0.includes(';') && (f0.match(/;/g) || []).length >= (f0.match(/,/g) || []).length ? ';' : ',');
   const rows = lines.map(line => {
     return splitCSVLine(line, delim);
-    // Gestione base separatore virgola o tab
-    if (line.includes('\t')) return line.split('\t').map(c => c.trim());
-    return line.split(',').map(c => c.trim().replace(/^"|"$/g, ''));
   });
   processTableRows(rows);
 }
@@ -2003,7 +2468,7 @@ function confirmImportedWorkout() {
     const name = row[exIdx] ? String(row[exIdx]).trim() : '';
     if (!name || name.toLowerCase().includes('mobilità') || name.toLowerCase().includes('riscaldamento')) return;
 
-    let sets = 3;
+    let sets = 1;
     if (row[setsIdx]) {
       const parsedSets = parseInt(row[setsIdx], 10);
       if (!isNaN(parsedSets) && parsedSets > 0) sets = parsedSets;
@@ -2033,15 +2498,20 @@ function confirmImportedWorkout() {
   }
 
   const newId = 'routine_' + Date.now();
-  userWorkouts[newId] = {
+  const nextWorkouts = {
+    ...userWorkouts,
+    [newId]: {
     id: newId,
     name: routineName,
     exercises: exercises
+    }
   };
-
-  safeSet('gym_user_workouts', JSON.stringify(userWorkouts));
+  if (!safeSetBatch([
+    ['gym_user_workouts', JSON.stringify(nextWorkouts)],
+    ['gym_active_workout_id', newId]
+  ])) return;
+  userWorkouts = nextWorkouts;
   activeWorkoutId = newId;
-  safeSet('gym_active_workout_id', activeWorkoutId);
 
   closeImportModal();
   checkWelcomeScreen();
@@ -2056,11 +2526,25 @@ function saveBodyProfile() {
   const aInput = document.getElementById('userAgeInput');
   const hInput = document.getElementById('userHeightInput');
 
-  if (gInput) bodyProfile.gender = gInput.value || 'male';
-  if (aInput) bodyProfile.age = parseInt(aInput.value, 10) || null;
-  if (hInput) bodyProfile.height = parseFloat(hInput.value) || null;
+  const age = aInput && aInput.value ? Number(aInput.value) : null;
+  const height = hInput && hInput.value ? Number(hInput.value) : null;
+  if (age !== null && (!Number.isSafeInteger(age) || age < 1 || age > 120)) {
+    alert('Inserisci un’età compresa tra 1 e 120 anni.');
+    return;
+  }
+  if (height !== null && (!Number.isFinite(height) || height < 50 || height > 260)) {
+    alert('Inserisci un’altezza valida compresa tra 50 e 260 cm.');
+    return;
+  }
 
-  safeSet('gym_body_profile', JSON.stringify(bodyProfile));
+  const nextProfile = {
+    ...bodyProfile,
+    gender: gInput ? gInput.value || 'male' : bodyProfile.gender,
+    age,
+    height
+  };
+  if (!safeSet('gym_body_profile', JSON.stringify(nextProfile))) return;
+  bodyProfile = nextProfile;
   renderBodyStats();
   showToast('Profilo fisico aggiornato!');
 }
@@ -2181,16 +2665,21 @@ function logNewWeight() {
   const fatInput = document.getElementById('newFatPctInput');
   const nInput = document.getElementById('newWeightNote');
 
-  const weight = parseFloat(wInput.value);
-  if (!weight || weight <= 0) {
+  const weight = Number(wInput.value);
+  if (!Number.isFinite(weight) || weight <= 0) {
     alert('Inserisci un peso valido in kg.');
     return;
   }
 
   const date = dInput.value || localDateStr();
+  const fatValue = fatInput && fatInput.value ? Number(fatInput.value) : null;
+  if (fatValue !== null && (!Number.isFinite(fatValue) || fatValue <= 0 || fatValue >= 100)) {
+    alert('La percentuale di massa grassa deve essere compresa tra 0 e 100.');
+    return;
+  }
   const note = nInput ? nInput.value.trim() : '';
 
-  const fatPct = parseFloat(fatInput.value) || null;
+  const fatPct = fatValue;
   let leanPct = null;
   let fatKg = null;
   let leanKg = null;
@@ -2212,10 +2701,13 @@ function logNewWeight() {
     note: note
   };
 
-  if (!bodyProfile.weights) bodyProfile.weights = [];
-  bodyProfile.weights.unshift(entry);
-  bodyProfile.weights.sort((a, b) => b.date.localeCompare(a.date) || b.id - a.id);
-  safeSet('gym_body_profile', JSON.stringify(bodyProfile));
+  const nextProfile = {
+    ...bodyProfile,
+    weights: [...(bodyProfile.weights || []), entry]
+      .sort((a, b) => b.date.localeCompare(a.date) || b.id - a.id)
+  };
+  if (!safeSet('gym_body_profile', JSON.stringify(nextProfile))) return;
+  bodyProfile = nextProfile;
 
   wInput.value = '';
   if (fatInput) fatInput.value = '';
@@ -2300,7 +2792,7 @@ function renderBodyStats() {
               <strong style="color: #fff; font-size: 0.95rem;">${w.weight} kg</strong> ${deltaKgStr}
             </div>
             <div style="color: var(--text-muted); font-size: 0.78rem;">
-              📅 ${w.date} <button class="action-btn btn-secondary" style="padding:2px 6px;font-size:.7rem" onclick="deleteWeight(${w.id})">🗑️</button>
+              📅 ${esc(w.date)} <button class="action-btn btn-secondary" style="padding:2px 6px;font-size:.7rem" onclick="deleteWeight(${w.id})">🗑️</button>
             </div>
           </div>
           ${compDetails}
@@ -2321,12 +2813,13 @@ function getBmiLabel(bmi) {
 
 // ==================== NAVIGAZIONE TABS PRINCIPALI ====================
 function switchMainTab(tab) {
+  closeAppMenu();
   document.querySelectorAll('.bottom-nav .nav-item').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+  document.querySelectorAll('.app-menu-links [data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
   ['home', 'workouts', 'calendar', 'analytics', 'body'].forEach(t => {
     const el = document.getElementById('view' + t[0].toUpperCase() + t.slice(1));
     if (el) el.classList.toggle('active', t === tab);
   });
-  document.body.classList.toggle('on-home', tab === 'home');
   if (tab === 'workouts') keepAwake();
   else if (wakeLock) { wakeLock.release(); wakeLock = null; }
   if (tab === 'home') renderHome();
@@ -2334,6 +2827,38 @@ function switchMainTab(tab) {
   if (tab === 'analytics') renderAnalytics();
   if (tab === 'body') renderBodyStats();
   window.scrollTo(0, 0);
+}
+
+function toggleAppMenu() {
+  if (document.body.classList.contains('menu-open')) {
+    closeAppMenu();
+    return;
+  }
+  document.body.classList.add('menu-open');
+  const menu = document.getElementById('appMenu');
+  menu.inert = false;
+  menu.setAttribute('aria-hidden', 'false');
+  document.getElementById('menuToggle').setAttribute('aria-expanded', 'true');
+  document.querySelector('.app-menu-links button').focus();
+}
+
+function closeAppMenu() {
+  document.body.classList.remove('menu-open');
+  const menu = document.getElementById('appMenu');
+  const toggle = document.getElementById('menuToggle');
+  if (menu) {
+    menu.inert = true;
+    menu.setAttribute('aria-hidden', 'true');
+  }
+  if (toggle) {
+    toggle.setAttribute('aria-expanded', 'false');
+    if (document.activeElement && document.activeElement.closest('#appMenu')) toggle.focus();
+  }
+}
+
+function navigateFromMenu(tab) {
+  closeAppMenu();
+  switchMainTab(tab);
 }
 
 function renderHome() {
@@ -2358,33 +2883,37 @@ function copyAllHistory() {
       entry.exercises.forEach(ex => {
         ex.sets.forEach(s => {
           const diffText = s.diff === 'easy' ? '🟢 Facile' : s.diff === 'med' ? '🟡 Medio' : s.diff === 'hard' ? '🔴 Difficile' : '';
-          tsv += `${entry.date}\t${entry.time || ''}\t${entry.workout}\t${ex.name}\t${s.setNum}\t${s.kg}\t${s.reps}\t${diffText}\n`;
+          tsv += [entry.date, entry.time || '', entry.workout, ex.name, s.setNum, Number(s.kg) > 0 ? s.kg : '', s.reps || '', diffText]
+            .map(tsvField).join('\t') + '\n';
         });
       });
     } else {
       const diffText = entry.diff === 'easy' ? '🟢 Facile' : entry.diff === 'med' ? '🟡 Medio' : entry.diff === 'hard' ? '🔴 Difficile' : '';
-      tsv += `${entry.date}\t${entry.time || ''}\t${entry.workout}\t${entry.notes || ''}\t-\t-\t-\t${diffText}\n`;
+      tsv += [entry.date, entry.time || '', entry.workout, entry.notes || '', '-', '-', '-', diffText]
+        .map(tsvField).join('\t') + '\n';
     }
   });
 
-  navigator.clipboard.writeText(tsv).then(() => {
-    showToast('📋 Storico copiato per Google Fogli!');
-  });
+  copyTextToClipboard(tsv, '📋 Storico copiato per Google Fogli!');
 }
 
 function exportCSV() {
   let csv = "Data,Ora,Attivita,Esercizio,Serie,Carico_Kg,Ripetizioni,Difficolta,Note\n";
+  const csvField = value => {
+    const text = neutralizeSpreadsheetFormula(value);
+    return `"${text.replace(/"/g, '""')}"`;
+  };
   workoutHistory.forEach(entry => {
     if (entry.exercises && entry.exercises.length > 0) {
       entry.exercises.forEach(ex => {
         ex.sets.forEach(s => {
           const diffText = s.diff === 'easy' ? 'Facile' : s.diff === 'med' ? 'Medio' : s.diff === 'hard' ? 'Difficile' : '';
-          csv += `"${entry.date}","${entry.time || ''}","${entry.workout}","${ex.name}",${s.setNum},${s.kg},${s.reps},"${diffText}",""\n`;
+          csv += [entry.date, entry.time, entry.workout, ex.name, s.setNum, Number(s.kg) > 0 ? s.kg : '', s.reps || '', diffText, ''].map(csvField).join(',') + '\n';
         });
       });
     } else {
       const diffText = entry.diff === 'easy' ? 'Facile' : entry.diff === 'med' ? 'Medio' : entry.diff === 'hard' ? 'Difficile' : '';
-      csv += `"${entry.date}","${entry.time || ''}","${entry.workout}","-",0,0,0,"${diffText}","${entry.notes || ''}"\n`;
+      csv += [entry.date, entry.time, entry.workout, '-', 0, 0, 0, diffText, entry.notes].map(csvField).join(',') + '\n';
     }
   });
 
@@ -2401,8 +2930,14 @@ function exportCSV() {
 
 function clearAllHistory() {
   if (!confirm('Vuoi davvero cancellare TUTTO lo storico allenamenti?')) return;
+  try {
+    localStorage.removeItem('gym_workout_history');
+  } catch (error) {
+    console.error('GymTracker: impossibile cancellare lo storico.', error);
+    alert('Impossibile cancellare lo storico: il browser ha rifiutato la modifica.');
+    return;
+  }
   workoutHistory = [];
-  localStorage.removeItem('gym_workout_history');
   renderCalendar();
   renderAnalytics();
   showToast('Storico cancellato.');
@@ -2433,6 +2968,19 @@ function showToast(msg) {
   setTimeout(() => toast.classList.remove('show'), 2200);
 }
 
+async function copyTextToClipboard(text, successMessage) {
+  try {
+    if (!navigator.clipboard || !navigator.clipboard.writeText) {
+      throw new Error('API appunti non disponibile in questo browser.');
+    }
+    await navigator.clipboard.writeText(text);
+    showToast(successMessage);
+  } catch (error) {
+    console.error('GymTracker: copia negli appunti non riuscita.', error);
+    alert('Copia non riuscita. Puoi scaricare il file CSV dalla sezione Progressi.');
+  }
+}
+
 function registerServiceWorker() {
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
@@ -2445,30 +2993,54 @@ function registerServiceWorker() {
 // ==================== AGGIUNTE v10 ====================
 function deleteHistoryEntry(id) {
   if (!confirm('Eliminare questa seduta?')) return;
-  workoutHistory = workoutHistory.filter(w => w.id !== id);
-  safeSet('gym_workout_history', JSON.stringify(workoutHistory));
+  const nextHistory = workoutHistory.filter(w => w.id !== id);
+  if (!safeSet('gym_workout_history', JSON.stringify(nextHistory))) return;
+  workoutHistory = nextHistory;
   renderCalendar(); renderAnalytics();
 }
 function deleteWeight(id) {
   if (!confirm('Eliminare questa rilevazione?')) return;
-  bodyProfile.weights = (bodyProfile.weights || []).filter(w => w.id !== id);
-  safeSet('gym_body_profile', JSON.stringify(bodyProfile));
+  const nextProfile = {
+    ...bodyProfile,
+    weights: (bodyProfile.weights || []).filter(w => w.id !== id)
+  };
+  if (!safeSet('gym_body_profile', JSON.stringify(nextProfile))) return;
+  bodyProfile = nextProfile;
   renderBodyStats();
 }
 function fillLoadsForDate() {
+  const dateStr = document.getElementById('calLogDate').value;
+  if (!dateStr) {
+    alert('Seleziona la data della seduta.');
+    return;
+  }
   const type = document.getElementById('calLogTypeSelect').value;
   let target;
   if (type === 'pesi') {
     const rId = document.getElementById('calLogRoutineSelect').value;
     target = userWorkouts[rId] ? rId : 'free_pesi';
   } else if (type === 'calisthenics') target = 'calisthenics';
-  else { alert('Per "Altro" usa "Salva nel Calendario".'); return; }
-  sessionDateOverride = calSelectedDateStr;
+  else {
+    target = 'free_altro';
+    sessionWorkoutTitleOverride = document.getElementById('calLogCustomDesc').value.trim() || 'Attività Extra';
+    sessionWorkoutCategoryOverride = 'altro';
+  }
+  if (type !== 'altro') {
+    sessionWorkoutTitleOverride = null;
+    sessionWorkoutCategoryOverride = null;
+  }
+  setCalendarSelectedDate(dateStr);
+  sessionDateOverride = dateStr;
   closeCalendarLogModal();
   switchMainTab('workouts');
-  checkWelcomeScreen();
   selectWorkoutSubtab(target);
+  checkWelcomeScreen();
   showSessionBanner();
+}
+function setCalendarSelectedDate(dateStr) {
+  calSelectedDateStr = dateStr;
+  const [year, month] = dateStr.split('-').map(Number);
+  calCurrentDate = new Date(year, month - 1, 1);
 }
 function showSessionBanner() {
   const b = document.getElementById('sessionDateBanner');
@@ -2480,9 +3052,14 @@ function hideSessionBanner() {
   const b = document.getElementById('sessionDateBanner');
   if (b) b.style.display = 'none';
 }
-function cancelSessionDate() { sessionDateOverride = null; hideSessionBanner(); }
+function cancelSessionDate() {
+  sessionDateOverride = null;
+  sessionWorkoutTitleOverride = null;
+  sessionWorkoutCategoryOverride = null;
+  hideSessionBanner();
+}
 
-const BACKUP_KEYS = ['gym_user_workouts', 'gym_active_workout_id', 'gym_active_session_inputs', 'gym_active_warmup', 'gym_cali_exercises', 'gym_workout_history', 'gym_body_profile'];
+const BACKUP_KEYS = ['gym_user_workouts', 'gym_active_workout_id', 'gym_active_session_inputs', 'gym_active_warmup', 'gym_cali_exercises', 'gym_free_pesi', 'gym_free_altro', 'gym_workout_history', 'gym_body_profile'];
 function exportBackup() {
   const out = { app: 'gymtracker', version: 1, exportedAt: new Date().toISOString(), data: {} };
   BACKUP_KEYS.forEach(k => { const v = localStorage.getItem(k); if (v !== null) out.data[k] = v; });
@@ -2493,18 +3070,62 @@ function exportBackup() {
   showToast('💾 Backup scaricato');
 }
 function importBackup(ev) {
-  const f = ev.target.files[0];
+  const input = ev.target;
+  const f = input.files[0];
   if (!f) return;
   const r = new FileReader();
   r.onload = () => {
     try {
       const o = JSON.parse(r.result);
-      if (o.app !== 'gymtracker' || !o.data) throw new Error('bad');
+      if (!o || o.app !== 'gymtracker' || o.version !== 1 || !o.data || typeof o.data !== 'object' || Array.isArray(o.data)) {
+        throw new Error('Formato backup non valido.');
+      }
+
+      const imported = {};
+      Object.entries(o.data).forEach(([key, value]) => {
+        if (!BACKUP_KEYS.includes(key)) return;
+        if (typeof value !== 'string') throw new Error(`Dato non valido: ${key}`);
+        const parsed = key === 'gym_active_workout_id' ? value : JSON.parse(value);
+        if (!isValidStoredValue(key, parsed)) throw new Error(`Formato non valido: ${key}`);
+        imported[key] = value;
+      });
+      if (Object.keys(imported).length === 0) throw new Error('Il backup non contiene dati riconosciuti.');
+
       if (!confirm('Il ripristino sostituisce TUTTI i dati attuali. Continuare?')) return;
-      BACKUP_KEYS.forEach(k => localStorage.removeItem(k));
-      Object.entries(o.data).forEach(([k, v]) => { if (BACKUP_KEYS.includes(k)) safeSet(k, v); });
+
+      const previous = {};
+      BACKUP_KEYS.forEach(key => {
+        const value = localStorage.getItem(key);
+        if (value !== null) previous[key] = value;
+      });
+      try {
+        BACKUP_KEYS.forEach(key => localStorage.removeItem(key));
+        Object.entries(imported).forEach(([key, value]) => localStorage.setItem(key, value));
+      } catch (error) {
+        try {
+          BACKUP_KEYS.forEach(key => localStorage.removeItem(key));
+          Object.entries(previous).forEach(([key, value]) => localStorage.setItem(key, value));
+        } catch (restoreError) {
+          console.error('GymTracker: errore durante il ripristino dei dati precedenti.', restoreError);
+          alert('Ripristino non riuscito e recupero automatico incompleto. Non chiudere la pagina; esporta subito i dati ancora disponibili e verifica lo spazio del browser.');
+          return;
+        }
+        console.error('GymTracker: importazione backup non riuscita.', error);
+        alert('Ripristino non riuscito. I dati precedenti sono stati ripristinati.');
+        return;
+      }
       location.reload();
-    } catch (e) { alert('File di backup non valido.'); }
+    } catch (e) {
+      console.error('GymTracker: backup non valido.', e);
+      alert(`File di backup non valido: ${e.message}`);
+    } finally {
+      input.value = '';
+    }
+  };
+  r.onerror = () => {
+    console.error('GymTracker: impossibile leggere il file di backup.', r.error);
+    alert('Impossibile leggere il file di backup selezionato.');
+    input.value = '';
   };
   r.readAsText(f);
 }
@@ -2524,7 +3145,7 @@ function getLastSets(name) {
 function phKg(n, s, d) { const l = getLastSets(n); if (!l) return d; const x = l[s - 1] || l[l.length - 1]; return x.kg ? x.kg : d; }
 function phReps(n, s) { const l = getLastSets(n); if (!l) return 'Reps'; const x = l[s - 1] || l[l.length - 1]; return x.reps ? x.reps : 'Reps'; }
 function copyLastSets(exId) {
-  const isFree = activeWorkoutId === 'calisthenics' || activeWorkoutId === 'free_pesi';
+  const isFree = ['calisthenics', 'free_pesi', 'free_altro'].includes(activeWorkoutId);
   const w = userWorkouts[activeWorkoutId];
   const ex = (isFree ? caliExercises : (w ? w.exercises : [])).find(e => e.id === exId);
   if (!ex) return;
@@ -2575,17 +3196,24 @@ document.addEventListener('visibilitychange', () => {
 
 function saveFreeAsRoutine() {
   if (!caliExercises.length) { alert('Aggiungi prima qualche esercizio alla lavagna.'); return; }
-  const name = (prompt('Nome della nuova scheda?', freeCategory === 'pesi' ? 'Scheda libera' : 'Scheda calisthenics') || '').trim();
+  const defaultName = freeCategory === 'pesi' ? 'Scheda libera' : freeCategory === 'altro' ? 'Scheda attività' : 'Scheda calisthenics';
+  const name = (prompt('Nome della nuova scheda?', defaultName) || '').trim();
   if (!name) return;
   const id = 'routine_' + Date.now();
-  userWorkouts[id] = {
-    id, name,
-    exercises: caliExercises.map((e, i) => {
-      const l = getLastSets(e.name);
-      return { id: `ex_${Date.now()}_${i}`, name: e.name, sets: e.sets, targetReps: (l && l[0] && l[0].reps) ? String(l[0].reps) : '8/10', rest: e.rest || 90 };
-    })
+  const nextWorkouts = {
+    ...userWorkouts,
+    [id]: {
+      id, name,
+      exercises: caliExercises.map((e, i) => {
+        return { id: `ex_${Date.now()}_${i}`, name: e.name, sets: e.sets, targetReps: e.targetReps || '8/10', rest: e.rest || 90 };
+      })
+    }
   };
-  safeSet('gym_user_workouts', JSON.stringify(userWorkouts));
+  if (!safeSetBatch([
+    ['gym_user_workouts', JSON.stringify(nextWorkouts)],
+    ['gym_active_workout_id', id]
+  ])) return;
+  userWorkouts = nextWorkouts;
   activeWorkoutId = id;
   checkWelcomeScreen(); renderSubtabs(); selectWorkoutSubtab(id);
   showToast(`📌 Scheda "${name}" salvata!`);

@@ -354,6 +354,39 @@ body {
   margin-top: 5px;
 }
 
+.free-exercise-config {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-muted);
+  font-size: 0.7rem;
+}
+
+.free-exercise-config .app-input {
+  min-width: 0;
+  width: 86px;
+  height: 32px;
+  padding: 4px 6px;
+  font-size: 0.8rem;
+}
+
+.free-exercise-config .free-exercise-target {
+  width: 150px;
+}
+
+.free-exercise-save {
+  min-height: 32px;
+  padding: 4px 9px;
+  font-size: 0.75rem;
+}
+
+.storage-warning {
+  margin-top: 8px;
+  color: var(--med-border);
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
 .badge {
   font-size: 0.7rem;
   padding: 2px 7px;
@@ -1117,6 +1150,166 @@ body {
 .home-tile span{font-size:2rem}.home-tile small{color:var(--text-muted);font-size:.72rem}
 .home-tile:active{transform:scale(.97)}
 .session-banner{display:flex;justify-content:space-between;align-items:center;gap:8px;background:rgba(88,166,255,.12);border:1px solid rgba(88,166,255,.4);border-radius:8px;padding:8px 10px;margin-bottom:10px;font-size:.8rem;color:var(--accent)}
-.on-home .bottom-nav{display:none}
 .bottom-nav .nav-item{font-size:.62rem}
 .bottom-nav{display:grid}
+
+/* App navigation */
+.menu-toggle {
+  width: 38px;
+  height: 38px;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: var(--bg-card);
+  color: var(--text-main);
+  font-size: 1.2rem;
+  cursor: pointer;
+}
+
+.menu-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 150;
+  border: 0;
+  background: rgba(0, 0, 0, 0.58);
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.2s ease, visibility 0.2s ease;
+}
+
+.app-menu {
+  position: fixed;
+  inset: 0 auto 0 0;
+  z-index: 160;
+  width: min(320px, 86vw);
+  padding: max(18px, env(safe-area-inset-top)) 16px max(18px, env(safe-area-inset-bottom));
+  overflow-y: auto;
+  background: var(--bg-card);
+  border-right: 1px solid var(--border-color);
+  box-shadow: 12px 0 36px rgba(0, 0, 0, 0.35);
+  transform: translateX(-105%);
+  transition: transform 0.22s ease;
+}
+
+.menu-open .menu-backdrop {
+  opacity: 1;
+  visibility: visible;
+}
+
+.menu-open .app-menu {
+  transform: translateX(0);
+}
+
+.app-menu-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--border-color);
+  font-size: 1.05rem;
+}
+
+.app-menu-links {
+  display: grid;
+  gap: 6px;
+  padding-top: 14px;
+}
+
+.app-menu-links button {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 48px;
+  padding: 10px 12px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-main);
+  text-align: left;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.app-menu-links button span {
+  width: 24px;
+  text-align: center;
+  font-size: 1.15rem;
+}
+
+.app-menu-links button:focus-visible,
+.app-menu-links button:hover,
+.app-menu-links .active {
+  outline: none;
+  background: var(--bg-input);
+  border-color: var(--border-color);
+}
+
+.app-menu-links .app-menu-import {
+  margin-top: 10px;
+  border-top: 1px solid var(--border-color);
+  border-radius: 0 0 10px 10px;
+  color: var(--accent);
+}
+
+@media (max-width: 420px) {
+  body {
+    padding-left: 10px;
+    padding-right: 10px;
+  }
+
+  .header-import-btn,
+  .status-badge {
+    display: none;
+  }
+
+  .app-header {
+    gap: 8px;
+  }
+}
+
+@media (min-width: 720px) {
+  body {
+    padding: max(20px, env(safe-area-inset-top)) 24px 32px;
+  }
+
+  .app-header,
+  .app-view {
+    width: 100%;
+    max-width: 1160px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+
+  .app-header {
+    margin-bottom: 22px;
+    padding-bottom: 12px;
+  }
+
+  .app-view > .card,
+  .app-view > .day-details-box {
+    padding: 20px;
+  }
+
+  .home-hero {
+    padding: 30px 8px 22px;
+    text-align: left;
+  }
+
+  .home-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .home-tile {
+    min-height: 148px;
+  }
+
+  .bottom-nav {
+    display: none !important;
+  }
+}
+
+@media (min-width: 1100px) {
+  .home-tile {
+    padding: 26px 14px;
+  }
+}

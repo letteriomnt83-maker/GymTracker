@@ -1,10 +1,17 @@
-const CACHE_NAME = 'gymtracker-v9';
+const CACHE_NAME = 'gymtracker-v27';
 const ASSETS = [
   './',
   './index.html',
-  './style.css?v=9',
-  './app.js?v=9',
+  './style.css?v=27',
+  './app.js?v=27',
   './xlsx.mini.min.js',
+  './vendor/tesseract/tesseract.min.js',
+  './vendor/tesseract/worker.min.js',
+  './vendor/tesseract/tesseract-core-simd-lstm.wasm.js',
+  './vendor/tesseract/tesseract-core-simd-lstm.wasm',
+  './vendor/tesseract/tesseract-core-lstm.wasm.js',
+  './vendor/tesseract/tesseract-core-lstm.wasm',
+  './vendor/tessdata/ita.traineddata',
   './manifest.json',
   './apple-touch-icon.png',
   './icon-192.png',
@@ -25,7 +32,7 @@ self.addEventListener('activate', (event) => {
     caches.keys().then((keys) => {
       return Promise.all(
         keys.map((key) => {
-          if (key !== CACHE_NAME) {
+          if (key.startsWith('gymtracker-') && key !== CACHE_NAME) {
             return caches.delete(key);
           }
         })
@@ -35,23 +42,34 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('fetch', (event) => {
+  const request = event.request;
+  const requestUrl = new URL(request.url);
+  if (request.method !== 'GET'
+    || requestUrl.origin !== self.location.origin
+    || (!['document', 'style', 'script', 'image', 'font'].includes(request.destination)
+      && !requestUrl.pathname.includes('/vendor/tesseract/')
+      && !requestUrl.pathname.includes('/vendor/tessdata/'))) return;
+
   event.respondWith(
-    fetch(event.request)
-      .then((networkResponse) => {
+    fetch(request)
+      .then(async (networkResponse) => {
         if (networkResponse && networkResponse.status === 200) {
-          const responseToCache = networkResponse.clone();
-          caches.open(CACHE_NAME).then((cache) => {
-            cache.put(event.request, responseToCache);
-          });
+          try {
+            const cache = await caches.open(CACHE_NAME);
+            await cache.put(request, networkResponse.clone());
+          } catch (error) {
+            console.error('GymTracker: impossibile aggiornare la cache offline.', error);
+          }
         }
         return networkResponse;
       })
       .catch(() => {
-        return caches.match(event.request).then((cachedResponse) => {
+        return caches.match(request).then((cachedResponse) => {
           if (cachedResponse) return cachedResponse;
-          if (event.request.mode === 'navigate') {
+          if (request.mode === 'navigate') {
             return caches.match('./index.html');
           }
+          return Response.error();
         });
       })
   );

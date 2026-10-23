@@ -1,12 +1,11 @@
 {
   "name": "Gym Workout Tracker",
   "short_name": "GymTracker",
-  "description": "Tracker allenamento offline per iPhone 13 mini",
+  "description": "Tracker di allenamento offline per telefono, tablet e computer",
   "start_url": "./index.html",
   "display": "standalone",
   "background_color": "#0d1117",
   "theme_color": "#0d1117",
-  "orientation": "portrait",
   "icons": [
     {
       "src": "icon-192.png",

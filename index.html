@@ -2,7 +2,7 @@
 <html lang="it">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>GymTracker Pro</title>
   
   <!-- iOS PWA Meta Tags -->
@@ -13,22 +13,38 @@
   <link rel="manifest" href="manifest.json">
   <meta name="theme-color" content="#0d1117">
   
-  <link rel="stylesheet" href="style.css?v=10">
+  <link rel="stylesheet" href="style.css?v=27">
 </head>
 <body>
 
   <!-- App Header -->
   <header class="app-header">
     <div class="brand">
+      <button id="menuToggle" class="menu-toggle" type="button" aria-label="Apri menu" aria-expanded="false" aria-controls="appMenu" onclick="toggleAppMenu()">☰</button>
       <span style="font-size: 1.3rem;">🏋️</span>
       <h1>GymTracker</h1>
     </div>
     <div class="header-actions">
-      <button class="action-btn btn-secondary" style="padding: 5px 10px; font-size: 0.75rem;" onclick="switchMainTab('home')">🏠 Home</button>
-      <button class="action-btn btn-secondary" style="padding: 5px 10px; font-size: 0.75rem;" onclick="openImportModal()">📁 Importa</button>
+      <button class="action-btn btn-secondary header-import-btn" style="padding: 5px 10px; font-size: 0.75rem;" onclick="openImportModal()">📁 Importa</button>
       <div id="connectionStatus" class="status-badge">🟢 Offline Ready</div>
     </div>
   </header>
+
+  <button id="menuBackdrop" class="menu-backdrop" type="button" aria-label="Chiudi menu" onclick="closeAppMenu()"></button>
+  <aside id="appMenu" class="app-menu" aria-hidden="true" inert>
+    <div class="app-menu-header">
+      <strong>Navigazione</strong>
+      <button class="modal-close-btn" type="button" aria-label="Chiudi menu" onclick="closeAppMenu()">✕</button>
+    </div>
+    <nav class="app-menu-links" aria-label="Sezioni principali">
+      <button type="button" data-tab="home" onclick="navigateFromMenu('home')"><span>🏠</span>Home</button>
+      <button type="button" data-tab="workouts" onclick="navigateFromMenu('workouts')"><span>🏋️</span>Allenamento</button>
+      <button type="button" data-tab="calendar" onclick="navigateFromMenu('calendar')"><span>📅</span>Calendario</button>
+      <button type="button" data-tab="analytics" onclick="navigateFromMenu('analytics')"><span>📊</span>Progressi</button>
+      <button type="button" data-tab="body" onclick="navigateFromMenu('body')"><span>⚖️</span>Misure</button>
+      <button type="button" class="app-menu-import" onclick="closeAppMenu(); openImportModal()"><span>📁</span>Importa scheda</button>
+    </nav>
+  </aside>
 
   <!-- ==================== 1. VISTA ALLENAMENTO ==================== -->
   <main id="viewHome" class="app-view active">
@@ -168,7 +184,7 @@
         </div>
       </div>
 
-      <!-- Add Custom Exercise to Calisthenics Canvas -->
+      <!-- Add a free-form exercise to this workout board -->
       <div class="card" style="margin-bottom: 12px; padding: 10px 12px;">
         <div style="display: flex; gap: 8px;">
           <input type="text" id="newCaliExerciseInput" class="app-input" list="exerciseSuggestions" autocomplete="off" onkeydown="if(event.key==='Enter')addCalisthenicsExercise()" placeholder="Es. Trazioni zavorrate, Dip, L-Sit, Muscle-Up...">
@@ -180,7 +196,7 @@
       <div id="exercisesContainerCali"></div>
 
       <div class="actions-bar">
-        <button class="action-btn btn-primary" onclick="completeCalisthenicsWorkout()">🏁 Salva Seduta Calisthenics</button>
+        <button class="action-btn btn-primary" onclick="completeCalisthenicsWorkout()">🏁 Salva Seduta</button>
         <button class="action-btn btn-secondary" onclick="copyCalisthenicsToClipboard()">📋 Copia per Sheets</button>
         <button class="action-btn btn-secondary" onclick="saveFreeAsRoutine()">📌 Salva come scheda</button>
         <button class="action-btn btn-danger" onclick="resetCalisthenicsSession()">🗑️ Reset Seduta</button>
@@ -200,13 +216,13 @@
 
       <!-- Day labels -->
       <div class="calendar-grid" style="margin-bottom: 6px;">
-        <div class="cal-day-label">L</div>
-        <div class="cal-day-label">M</div>
-        <div class="cal-day-label">M</div>
-        <div class="cal-day-label">G</div>
-        <div class="cal-day-label">V</div>
-        <div class="cal-day-label">S</div>
-        <div class="cal-day-label">D</div>
+        <div class="cal-day-label" aria-label="Lunedì">Lu</div>
+        <div class="cal-day-label" aria-label="Martedì">Ma</div>
+        <div class="cal-day-label" aria-label="Mercoledì">Me</div>
+        <div class="cal-day-label" aria-label="Giovedì">Gi</div>
+        <div class="cal-day-label" aria-label="Venerdì">Ve</div>
+        <div class="cal-day-label" aria-label="Sabato">Sa</div>
+        <div class="cal-day-label" aria-label="Domenica">Do</div>
       </div>
 
       <!-- Days Grid -->
@@ -285,15 +301,16 @@
     <!-- Export & Backup -->
     <div class="card">
       <div class="card-title">
-        <span>Backup & Sincronizzazione</span>
+        <span>Backup e trasferimento dati</span>
       </div>
+      <p class="storage-warning">I dati restano in questo browser e su questo dispositivo. Se cancelli i dati del sito o del browser, potresti perderli: scarica regolarmente un backup JSON e conservalo fuori dal dispositivo.</p>
       <div class="actions-bar" style="margin-top: 8px; margin-bottom: 0;">
         <button class="action-btn btn-secondary" onclick="copyAllHistory()">📋 Copia Tutto per Sheets</button>
         <button class="action-btn btn-secondary" onclick="exportCSV()">💾 Scarica File CSV</button>
         <button class="action-btn btn-primary" onclick="exportBackup()">🛡️ Backup completo (JSON)</button>
         <button class="action-btn btn-secondary" onclick="document.getElementById('backupFileInput').click()">♻️ Ripristina backup</button>
         <input type="file" id="backupFileInput" accept=".json,application/json" style="display:none" onchange="importBackup(event)">
-        <button class="action-btn btn-danger" onclick="clearAllHistory()">⚠️ Cancella Tutto</button>
+        <button class="action-btn btn-danger" onclick="clearAllHistory()">⚠️ Cancella storico</button>
       </div>
     </div>
   </main>
@@ -394,14 +411,15 @@
   <div id="importModal" class="modal-overlay">
     <div class="modal-box">
       <div class="modal-header">
-        <h3>📁 Importa Scheda da Excel / CSV</h3>
+        <h3>📥 Importa Scheda</h3>
         <button class="modal-close-btn" onclick="closeImportModal()">✕</button>
       </div>
       
-      <!-- Tabs Import: File o Incolla Testo -->
-      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 12px;">
-        <button id="importTabFileBtn" class="action-btn btn-secondary active" style="padding: 6px; font-size: 0.8rem;" onclick="switchImportTab('file')">📁 Carica File</button>
-        <button id="importTabTextBtn" class="action-btn btn-secondary" style="padding: 6px; font-size: 0.8rem;" onclick="switchImportTab('text')">📋 Incolla Testo</button>
+      <p style="font-size: 0.76rem; color: var(--text-muted); margin: 0 0 10px;">Carica un foglio, incolla il testo o acquisisci una foto della scheda stampata.</p>
+      <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin-bottom: 12px;">
+        <button id="importTabFileBtn" type="button" aria-pressed="true" class="action-btn btn-secondary active" style="padding: 6px; font-size: 0.8rem;" onclick="switchImportTab('file')">📁 File</button>
+        <button id="importTabTextBtn" type="button" aria-pressed="false" class="action-btn btn-secondary" style="padding: 6px; font-size: 0.8rem;" onclick="switchImportTab('text')">📋 Testo</button>
+        <button id="importTabPhotoBtn" type="button" aria-pressed="false" class="action-btn btn-secondary" style="padding: 6px; font-size: 0.8rem;" onclick="switchImportTab('photo')">📷 Foto</button>
       </div>
 
       <!-- Sezione File -->
@@ -419,6 +437,23 @@
         <label style="font-size: 0.75rem; color: var(--text-muted); display: block; margin-bottom: 4px;">Incolla qui il testo della tabella (supporta anche Scheda A e B insieme):</label>
         <textarea id="importPastedText" class="app-input" style="height: 120px; font-size: 0.75rem; font-family: monospace;" placeholder="Incolla qui le righe del foglio..."></textarea>
         <button class="action-btn btn-primary" style="margin-top: 8px; width: 100%; font-size: 0.82rem;" onclick="parsePastedWorkoutText()">⚡ Riconosci Schede Automaticamente</button>
+      </div>
+
+      <div id="importPhotoSection" style="display: none; margin-bottom: 12px;">
+        <label for="workoutPhotoInput" class="drop-zone" style="display: block; cursor: pointer; text-align: center;">
+          <div style="font-size: 2rem; margin-bottom: 8px;">📷</div>
+          <strong style="color: #fff; font-size: 0.95rem;">Scatta o scegli una foto</strong>
+          <p style="font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;">Immagine JPG, PNG o WebP. Inquadra la pagina dritta e con buona luce.</p>
+        </label>
+        <input type="file" id="workoutPhotoInput" accept="image/*" multiple style="display: none;" onchange="recognizeWorkoutPhoto(event)">
+        <div id="photoOcrStatus" role="status" aria-live="polite" style="display: none; margin-top: 8px; font-size: 0.8rem; color: var(--text-muted);"></div>
+        <img id="workoutPhotoPreview" alt="Anteprima della foto della scheda" style="display: none; max-width: 100%; max-height: 240px; object-fit: contain; margin: 8px auto; border-radius: 8px;">
+        <div id="photoOcrResult" style="display: none;">
+          <label for="importPhotoText" style="font-size: 0.75rem; color: var(--text-muted); display: block; margin: 8px 0 4px;">Testo riconosciuto — correggi eventuali errori prima di preparare la bozza:</label>
+          <textarea id="importPhotoText" class="app-input" style="height: 150px; font-size: 0.8rem; font-family: monospace;" placeholder="Il testo riconosciuto apparirà qui..."></textarea>
+          <button id="preparePhotoDraftBtn" class="action-btn btn-primary" style="margin-top: 8px; width: 100%; font-size: 0.82rem;" onclick="preparePhotoWorkoutDraft()">✏️ Prepara bozza modificabile</button>
+        </div>
+        <p style="font-size: 0.7rem; color: var(--text-muted); margin: 8px 0 0;">La foto viene elaborata interamente su questo dispositivo; non viene inviata a un server. Il riconoscimento funziona anche offline dopo il primo caricamento dell’app.</p>
       </div>
 
       <div id="importPreviewBox" style="display: none;">
@@ -499,6 +534,11 @@
       </div>
 
       <div style="margin-bottom: 12px;">
+        <label for="calLogDate" style="font-size: 0.8rem; color: var(--text-muted);">Data della seduta:</label>
+        <input type="date" id="calLogDate" class="app-input" onchange="updateCalendarLogDateTitle()">
+      </div>
+
+      <div style="margin-bottom: 12px;">
         <label style="font-size: 0.8rem; color: var(--text-muted);">Tipologia di Allenamento:</label>
         <select id="calLogTypeSelect" class="app-input" onchange="handleCalLogTypeChange()">
           <option value="pesi">🏋️ Sala Pesi (Scegli Scheda)</option>
@@ -527,7 +567,7 @@
       </div>
 
       <div style="display: flex; gap: 8px;">
-        <button class="action-btn btn-secondary" onclick="fillLoadsForDate()">✍️ Compila carichi</button>
+        <button class="action-btn btn-secondary" onclick="fillLoadsForDate()">✍️ Compila serie / ripetute</button>
         <button class="action-btn btn-primary" onclick="confirmCalendarWorkoutLog()">Solo segna</button>
         <button class="action-btn btn-secondary" onclick="closeCalendarLogModal()">Annulla</button>
       </div>
@@ -598,7 +638,7 @@
   </div>
 
   <!-- Bottom Navigation Bar -->
-  <nav class="bottom-nav">
+  <nav class="bottom-nav" aria-label="Navigazione principale">
     <button class="nav-item" data-tab="home" onclick="switchMainTab('home')"><span class="icon">🏠</span><span>Home</span></button>
     <button class="nav-item" data-tab="workouts" onclick="switchMainTab('workouts')"><span class="icon">🏋️</span><span>Allenam.</span></button>
     <button class="nav-item" data-tab="calendar" onclick="switchMainTab('calendar')"><span class="icon">📅</span><span>Calendario</span></button>
@@ -611,6 +651,7 @@
 
   <!-- SheetJS for 100% offline Excel file parsing -->
   <script src="xlsx.mini.min.js"></script>
-  <script src="app.js?v=10"></script>
+  <script src="vendor/tesseract/tesseract.min.js"></script>
+  <script src="app.js?v=27"></script>
 </body>
 </html>
